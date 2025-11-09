@@ -34,7 +34,7 @@ async function createLiveChatSession(callbacks: {
   onclose?: (e: CloseEvent) => void;
 }): Promise<any> {
   // Initialize AI client just-in-time
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = new GoogleGenAI({});
   const sessionPromise = ai.live.connect({
     model: MODEL_NAME,
     callbacks: callbacks,
