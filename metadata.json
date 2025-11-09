@@ -1,6 +1,6 @@
 {
   "name": "Shruti - તમારી AI Girlfriend",
-  "description": "Chat with Shruti, an empathetic AI companion designed to understand your feelings, provide positive thoughts, and offer supportive, girlfriend-like encouragement. Shruti learns from your conversation to give you uplifting and happy outputs within the current session, communicating in a blend of Gujarati and English.",
+  "description": "Chat with Shruti, an empathetic AI companion designed to understand your feelings, provide natural thoughts, and offer supportive, girlfriend-like encouragement. Shruti learns from your conversation to give you uplifting and happy outputs within the current session, communicating in a blend of Gujarati and English.",
   "requestFramePermissions": [
     "microphone"
   ]
