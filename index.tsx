@@ -5,6 +5,27 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenAI, Modality, LiveServerMessage, Blob } from "@google/genai";
+import { initializeApp } from "firebase/app";
+import { getAuth, signInAnonymously, onAuthStateChanged, User } from "firebase/auth";
+import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Timestamp } from "firebase/firestore";
+
+
+// --- Firebase Configuration ---
+const firebaseConfig = {
+  apiKey: "AIzaSyCUdWUxt-j63v-Dkcrauy32cbe7EvYHRZA",
+  authDomain: "shruti-9c12b.firebaseapp.com",
+  databaseURL: "https://shruti-9c12b-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "shruti-9c12b",
+  storageBucket: "shruti-9c12b.appspot.com",
+  messagingSenderId: "575863583929",
+  appId: "1:575863583929:web:fb108edeceb85589a9d768"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
 
 // --- From types.ts ---
 enum Sender {
@@ -124,11 +145,12 @@ interface ChatWindowProps {
   messages: Message[];
   isProcessingAudio: boolean;
   isAuroraSpeaking: boolean;
+  inProgressAuroraMessage: Message | null;
   playUserAudio: (messageId: string, base64Audio: string) => void;
   currentlyPlayingUserAudioId: string | null;
 }
 
-const ChatWindow: React.FC<ChatWindowProps> = ({ messages, isProcessingAudio, isAuroraSpeaking, playUserAudio, currentlyPlayingUserAudioId }) => {
+const ChatWindow: React.FC<ChatWindowProps> = ({ messages, isProcessingAudio, isAuroraSpeaking, inProgressAuroraMessage, playUserAudio, currentlyPlayingUserAudioId }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -137,7 +159,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ messages, isProcessingAudio, is
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, isProcessingAudio, isAuroraSpeaking]);
+  }, [messages, isProcessingAudio, isAuroraSpeaking, inProgressAuroraMessage]);
 
   return (
     <div className="flex-1 overflow-y-auto p-4 space-y-4 max-w-2xl mx-auto">
@@ -184,10 +206,14 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ messages, isProcessingAudio, is
           </div>
         </div>
       ))}
-      {(isProcessingAudio || isAuroraSpeaking) && (
+      {(isProcessingAudio || isAuroraSpeaking || inProgressAuroraMessage) && (
         <div className="flex justify-start">
           <div className="max-w-[75%] px-4 py-2 rounded-lg shadow-md bg-white text-gray-800 dark:bg-gray-800 dark:text-white border border-purple-200 dark:border-purple-800">
-            <LoadingSpinner isAuroraSpeaking={isAuroraSpeaking} />
+            {inProgressAuroraMessage ? (
+              <p className="whitespace-pre-wrap">{inProgressAuroraMessage.text}</p>
+            ) : (
+              <LoadingSpinner isAuroraSpeaking={isAuroraSpeaking} />
+            )}
           </div>
         </div>
       )}
@@ -370,18 +396,21 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, 
 
 // --- From App.tsx ---
 const App: React.FC = () => {
+  const [appState, setAppState] = useState<'initializing' | 'welcome' | 'chatting'>('initializing');
+  const [user, setUser] = useState<User | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState<string>(''); // For current user transcription or text input
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [isAuroraSpeaking, setIsAuroraSpeaking] = useState<boolean>(false);
-  const [isProcessingAudio, setIsProcessingAudio] = useState<boolean>(true); // Replaces isLoading
-  const [isConnecting, setIsConnecting] = useState<boolean>(true); // For initial connection status
+  const [isProcessingAudio, setIsProcessingAudio] = useState<boolean>(false); // Replaces isLoading
+  const [isConnecting, setIsConnecting] = useState<boolean>(false); // For initial connection status
   const [audioPlaybackError, setAudioPlaybackError] = useState<string | null>(null);
   const [currentlyPlayingUserAudioId, setCurrentlyPlayingUserAudioId] = useState<string | null>(null);
-  const [isSessionActive, setIsSessionActive] = useState<boolean>(false);
   const [hasApiKey, setHasApiKey] = useState<boolean>(false);
   const [isCheckingApiKey, setIsCheckingApiKey] = useState<boolean>(true);
   const [isStudioEnvironment, setIsStudioEnvironment] = useState<boolean>(false);
+  const [inProgressAuroraMessage, setInProgressAuroraMessage] = useState<Message | null>(null);
+
 
   // Refs for Live API and audio handling
   const liveSessionRef = useRef<Promise<any> | null>(null);
@@ -419,11 +448,77 @@ const App: React.FC = () => {
     return new Uint8Array(int16.buffer); // Return as Uint8Array
   };
 
+  // Helper function to save messages to Firestore
+  const saveMessage = async (messageData: { sender: Sender; text: string; audioData?: string; }) => {
+    if (!user) return;
+    try {
+        await addDoc(collection(db, 'users', user.uid, 'messages'), {
+            ...messageData,
+            timestamp: serverTimestamp(),
+        });
+    } catch (error) {
+        console.error("Error saving message to Firestore:", error);
+    }
+  };
+
+  // Firebase anonymous auth
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+        if (currentUser) {
+            setUser(currentUser);
+        } else {
+            try {
+                const userCredential = await signInAnonymously(auth);
+                setUser(userCredential.user);
+            } catch (error) {
+                console.error("Error signing in anonymously:", error);
+            }
+        }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch chat history from Firestore
+  useEffect(() => {
+    if (!user) return;
+
+    const messagesRef = collection(db, 'users', user.uid, 'messages');
+    const q = query(messagesRef, orderBy('timestamp', 'asc'));
+
+    let isFirstLoad = true;
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+        const msgs: Message[] = [];
+        querySnapshot.forEach((doc) => {
+            const data = doc.data();
+            msgs.push({
+                id: doc.id,
+                sender: data.sender,
+                text: data.text,
+                timestamp: (data.timestamp as Timestamp)?.toDate() || new Date(),
+                audioData: data.audioData,
+            });
+        });
+        setMessages(msgs);
+
+        // Add initial welcome message for new users
+        if (isFirstLoad && querySnapshot.empty) {
+             saveMessage({
+                sender: Sender.Aurora,
+                text: "Hi there, I'm Shruti! કેમ છો? I'm here to listen and offer some positive vibes! આજે તમે કેવું અનુભવો છો?",
+            });
+        }
+        isFirstLoad = false;
+    }, (error) => {
+        console.error("Error fetching messages from Firestore:", error);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
   // Check for API key on mount
   useEffect(() => {
     const checkApiKey = async () => {
         setIsCheckingApiKey(true);
-        // More robustly check for AI Studio environment
         const isStudio = !!(window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function');
         setIsStudioEnvironment(isStudio);
 
@@ -436,9 +531,6 @@ const App: React.FC = () => {
                 keyExists = false;
             }
         } else {
-            // Outside of AI Studio, this app is not expected to work without manual configuration.
-            // The check for process.env.API_KEY is a fallback for other potential environments
-            // but is not expected to work for a user opening the HTML file directly.
             console.warn("window.aistudio not found. The app may not function correctly as it's designed for environments like Google AI Studio where an API key is provided.");
             keyExists = !!process.env.API_KEY;
         }
@@ -447,6 +539,13 @@ const App: React.FC = () => {
     };
     checkApiKey();
   }, []);
+
+  // Transition from 'initializing' to 'welcome' state
+  useEffect(() => {
+    if (appState === 'initializing' && user && !isCheckingApiKey) {
+        setAppState('welcome');
+    }
+  }, [user, isCheckingApiKey, appState]);
 
   // Initialize audio contexts on mount
   useEffect(() => {
@@ -467,7 +566,7 @@ const App: React.FC = () => {
 
   // Live Session Setup and Teardown
   useEffect(() => {
-    if (!isSessionActive) {
+    if (appState !== 'chatting') {
         return;
     }
 
@@ -478,15 +577,6 @@ const App: React.FC = () => {
           onopen: () => {
             console.debug('Live session opened');
             setIsConnecting(false);
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: uuidv4(),
-                sender: Sender.Aurora,
-                text: "Hi there, I'm Shruti! કેમ છો? I'm here to listen and offer some positive vibes! આજે તમે કેવું અનુભવો છો?",
-                timestamp: new Date(),
-              },
-            ]);
             setIsProcessingAudio(false);
           },
           onmessage: async (message: LiveServerMessage) => {
@@ -496,7 +586,6 @@ const App: React.FC = () => {
               const newTranscription = message.serverContent.inputTranscription.text;
               currentInputTranscriptionRef.current = newTranscription;
               setInput(newTranscription);
-              // Show thinking spinner as soon as we get a transcript back
               if (newTranscription.trim()) {
                 setIsProcessingAudio(true);
               }
@@ -505,31 +594,11 @@ const App: React.FC = () => {
             if (message.serverContent?.outputTranscription) {
               const text = message.serverContent.outputTranscription.text;
               currentOutputTranscriptionRef.current += text;
-              setMessages((prevMessages) => {
-                let lastAuroraMsgIndex = -1;
-                for (let i = prevMessages.length - 1; i >= 0; i--) {
-                  if (prevMessages[i].sender === Sender.Aurora) {
-                    lastAuroraMsgIndex = i;
-                    break;
-                  }
-                }
-                if (lastAuroraMsgIndex > -1) {
-                  const updatedMessages = [...prevMessages];
-                  updatedMessages[lastAuroraMsgIndex] = {
-                    ...updatedMessages[lastAuroraMsgIndex],
-                    text: currentOutputTranscriptionRef.current,
-                  };
-                  return updatedMessages;
-                }
-                return [
-                  ...prevMessages,
-                  {
-                    id: uuidv4(),
-                    sender: Sender.Aurora,
-                    text: currentOutputTranscriptionRef.current,
-                    timestamp: new Date(),
-                  },
-                ];
+              setInProgressAuroraMessage({
+                id: 'in-progress-aurora',
+                sender: Sender.Aurora,
+                text: currentOutputTranscriptionRef.current,
+                timestamp: new Date(),
               });
             }
 
@@ -537,11 +606,11 @@ const App: React.FC = () => {
               const base64EncodedAudioString = message.serverContent.modelTurn.parts[0].inlineData.data;
               setIsAuroraSpeaking(true);
               setIsProcessingAudio(false);
+              setInProgressAuroraMessage(null);
 
               if (outputAudioContextRef.current) {
                 if (outputAudioContextRef.current.state === 'suspended') {
                   await outputAudioContextRef.current.resume();
-                  console.debug('Output AudioContext resumed before playing audio.');
                 }
 
                 nextStartTimeRef.current = Math.max(
@@ -590,6 +659,7 @@ const App: React.FC = () => {
 
             if (message.serverContent?.turnComplete) {
               console.debug('Turn complete');
+              setInProgressAuroraMessage(null);
 
               let userAudioData: string | undefined = undefined;
               if (userAudioChunksRef.current.length > 0) {
@@ -599,55 +669,19 @@ const App: React.FC = () => {
               }
 
               if (currentInputTranscriptionRef.current.trim()) {
-                setMessages((prevMessages) => {
-                  const newUserMessage: Message = {
-                    id: uuidv4(),
+                saveMessage({
                     sender: Sender.User,
                     text: currentInputTranscriptionRef.current,
-                    timestamp: new Date(),
                     audioData: userAudioData,
-                  };
-                  return [...prevMessages, newUserMessage];
                 });
               }
               currentInputTranscriptionRef.current = '';
               setInput('');
 
               if (currentOutputTranscriptionRef.current.trim()) {
-                setMessages((prevMessages) => {
-                  let lastAuroraMsgIndex = -1;
-                  for (let i = prevMessages.length - 1; i >= 0; i--) {
-                    if (prevMessages[i].sender === Sender.Aurora) {
-                      lastAuroraMsgIndex = i;
-                      break;
-                    }
-                  }
-                  if (lastAuroraMsgIndex > -1) {
-                    const updatedMessages = [...prevMessages];
-                    const lastAuroraMessage = updatedMessages[lastAuroraMsgIndex];
-                    if (!lastAuroraMessage.text || lastAuroraMessage.text !== currentOutputTranscriptionRef.current) {
-                      updatedMessages[lastAuroraMsgIndex] = {
-                        ...lastAuroraMessage,
-                        text: currentOutputTranscriptionRef.current,
-                        timestamp: new Date(),
-                      };
-                    } else if (lastAuroraMessage.text === currentOutputTranscriptionRef.current && !lastAuroraMessage.timestamp) {
-                       updatedMessages[lastAuroraMsgIndex] = {
-                        ...lastAuroraMessage,
-                        timestamp: new Date(),
-                      };
-                    }
-                    return updatedMessages;
-                  }
-                  return [
-                    ...prevMessages,
-                    {
-                      id: uuidv4(),
-                      sender: Sender.Aurora,
-                      text: currentOutputTranscriptionRef.current,
-                      timestamp: new Date(),
-                    },
-                  ];
+                saveMessage({
+                    sender: Sender.Aurora,
+                    text: currentOutputTranscriptionRef.current,
                 });
               }
               currentOutputTranscriptionRef.current = '';
@@ -658,25 +692,17 @@ const App: React.FC = () => {
 
             if (e.message.includes("Requested entity was not found.")) {
                 setHasApiKey(false);
-                setIsSessionActive(false); // Go back to welcome screen to re-select key
+                setAppState('welcome');
                 liveSessionRef.current?.then(session => session.close());
                 liveSessionRef.current = null;
-                return; // Stop further processing
+                return;
             }
 
             setIsConnecting(false);
             setIsProcessingAudio(false);
             setIsRecording(false);
             setIsAuroraSpeaking(false);
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: uuidv4(),
-                sender: Sender.Aurora,
-                text: `I'm sorry, I've lost connection. કૃપા કરીને પાનું તાજું કરો અથવા તમારી API કી તપાસો. Error: ${e.message}`,
-                timestamp: new Date(),
-              },
-            ]);
+            saveMessage({ sender: Sender.Aurora, text: `I'm sorry, I've lost connection. કૃપા કરીને પાનું તાજું કરો અથવા તમારી API કી તપાસો. Error: ${e.message}` });
             liveSessionRef.current?.then(session => session.close());
             liveSessionRef.current = null;
           },
@@ -687,15 +713,7 @@ const App: React.FC = () => {
             setIsRecording(false);
             setIsAuroraSpeaking(false);
             if (e.code !== 1000) {
-                 setMessages((prev) => [
-                    ...prev,
-                    {
-                        id: uuidv4(),
-                        sender: Sender.Aurora,
-                        text: `It seems our chat session closed unexpectedly. Error code: ${e.code}. કૃપા કરીને ફરી પ્રયાસ કરવા માટે પાનું તાજું કરો.`,
-                        timestamp: new Date(),
-                    },
-                ]);
+                 saveMessage({ sender: Sender.Aurora, text: `It seems our chat session closed unexpectedly. Error code: ${e.code}. કૃપા કરીને ફરી પ્રયાસ કરવા માટે પાનું તાજું કરો.` });
             }
             liveSessionRef.current = null;
           },
@@ -705,15 +723,7 @@ const App: React.FC = () => {
         console.error("Failed to initialize live chat session:", error);
         setIsConnecting(false);
         setIsProcessingAudio(false);
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: uuidv4(),
-            sender: Sender.Aurora,
-            text: "Oops! It seems I'm having trouble connecting right now. કૃપા કરીને API કી સમસ્યાઓ અથવા નેટવર્ક સમસ્યાઓ માટે કન્સોલ તપાસો.",
-            timestamp: new Date(),
-          },
-        ]);
+        saveMessage({ sender: Sender.Aurora, text: "Oops! It seems I'm having trouble connecting right now. કૃપા કરીને API કી સમસ્યાઓ અથવા નેટવર્ક સમસ્યાઓ માટે કન્સોલ તપાસો." });
       }
     };
 
@@ -738,7 +748,7 @@ const App: React.FC = () => {
         userAudioSourceRef.current = null;
       }
     };
-  }, [isSessionActive]);
+  }, [appState, user]);
 
   const playUserAudio = useCallback(async (messageId: string, base64Audio: string) => {
     if (userAudioSourceRef.current) {
@@ -790,7 +800,6 @@ const App: React.FC = () => {
     try {
       if (inputAudioContextRef.current.state === 'suspended') {
         await inputAudioContextRef.current.resume();
-        console.debug('Input AudioContext resumed before recording.');
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -807,7 +816,6 @@ const App: React.FC = () => {
         const inputDataCopy = new Float32Array(inputData);
         userAudioChunksRef.current.push(inputDataCopy);
 
-        // Stream audio data to the live session
         liveSessionRef.current?.then((session) => {
           const pcmBlob = createBlob(inputDataCopy);
           session.sendRealtimeInput({ media: pcmBlob });
@@ -820,7 +828,6 @@ const App: React.FC = () => {
       setIsRecording(true);
       currentInputTranscriptionRef.current = '';
       setInput('');
-      console.debug('Microphone recording started.');
 
     } catch (error) {
       console.error("Error starting recording:", error);
@@ -841,28 +848,23 @@ const App: React.FC = () => {
 
   const stopRecording = useCallback(async () => {
     if (!isRecording) return;
-    setIsRecording(false); // Set state immediately to update UI and prevent re-entry
+    setIsRecording(false);
 
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     if (scriptProcessorRef.current) {
         scriptProcessorRef.current.disconnect();
-        scriptProcessorRef.current.onaudioprocess = null; // Important to remove the listener
+        scriptProcessorRef.current.onaudioprocess = null;
     }
     mediaStreamRef.current = null;
     scriptProcessorRef.current = null;
 
-    // Send a stop signal to indicate the end of user's audio turn
     liveSessionRef.current?.then((session) => {
       session.sendRealtimeInput({ stop: true });
-      console.debug('Sent stop signal to end user turn.');
     });
 
-    // We expect a response, so show the thinking state if there was input
     if (currentInputTranscriptionRef.current.trim() || userAudioChunksRef.current.length > 0) {
         setIsProcessingAudio(true);
     }
-
-    console.debug('Microphone recording stopped.');
   }, [isRecording]);
 
   const toggleRecording = useCallback(() => {
@@ -876,42 +878,29 @@ const App: React.FC = () => {
   const handleSendText = useCallback(async () => {
     if (!input.trim() || isProcessingAudio || isAuroraSpeaking || isRecording || !liveSessionRef.current) return;
 
-    const userMessage: Message = {
-      id: uuidv4(),
-      sender: Sender.User,
-      text: input,
-      timestamp: new Date(),
-    };
-
-    setMessages((prevMessages) => [...prevMessages, userMessage]);
+    const textToSend = input;
     setInput('');
     setIsProcessingAudio(true);
+    
+    saveMessage({
+      sender: Sender.User,
+      text: textToSend,
+    });
 
     try {
       await liveSessionRef.current?.then(session => {
-        if (isRecording) {
-          stopRecording();
-        }
-        session.sendRealtimeInput({ text: userMessage.text });
+        session.sendRealtimeInput({ text: textToSend });
       });
-      console.debug('Text message sent to Shruti Live API.');
     } catch (error) {
       console.error("Error sending text message to Gemini Live:", error);
-      setMessages((prevMessages) => {
-        const lastUserMsg = prevMessages[prevMessages.length - 1];
-        if (lastUserMsg && lastUserMsg.sender === Sender.User && lastUserMsg.id === userMessage.id) {
-          return prevMessages.map(msg => msg.id === userMessage.id ? { ...msg, text: msg.text + "\n\n(I'm sorry, I encountered an error and couldn't process your message. કૃપા કરીને ફરી પ્રયાસ કરો!)" } : msg);
-        }
-        return [...prevMessages, { id: uuidv4(), sender: Sender.Aurora, text: "I'm sorry, I encountered an error and couldn't process your message. કૃપા કરીને ફરી પ્રયાસ કરો!", timestamp: new Date() }];
-      });
+      saveMessage({ sender: Sender.Aurora, text: "I'm sorry, I encountered an error and couldn't process your message. કૃપા કરીને ફરી પ્રયાસ કરો!" });
       setIsProcessingAudio(false);
     }
-  }, [input, isProcessingAudio, isAuroraSpeaking, isRecording, stopRecording]);
+  }, [input, isProcessingAudio, isAuroraSpeaking, isRecording]);
 
   const handleSelectApiKey = async () => {
     if(window.aistudio) {
         await window.aistudio.openSelectKey();
-        // Per guideline: assume success to handle race condition
         setHasApiKey(true);
     } else {
         alert("API Key selection is not available in this environment.");
@@ -922,20 +911,22 @@ const App: React.FC = () => {
     try {
       if (inputAudioContextRef.current?.state === 'suspended') {
         await inputAudioContextRef.current.resume();
-        console.debug('Input AudioContext resumed on start.');
       }
       if (outputAudioContextRef.current?.state === 'suspended') {
         await outputAudioContextRef.current.resume();
-        console.debug('Output AudioContext resumed on start.');
       }
-      setIsSessionActive(true);
+      setAppState('chatting');
     } catch (error) {
         console.error("Error resuming audio contexts:", error);
         alert("Could not start the audio session. Please check your browser permissions and refresh the page.");
     }
   }, []);
 
-  if (!isSessionActive) {
+  if (appState === 'initializing') {
+    return null; // The pre-React loader in index.html handles this state
+  }
+  
+  if (appState === 'welcome') {
       return <WelcomeScreen
           onStart={handleStartSession}
           onSelectApiKey={handleSelectApiKey}
@@ -951,7 +942,7 @@ const App: React.FC = () => {
         <h1 className="text-xl font-bold text-center">Shruti - તમારી AI Girlfriend</h1>
       </header>
 
-      {isConnecting ? (
+      {isConnecting && messages.length === 0 ? (
         <div className="flex-1 flex items-center justify-center text-lg text-gray-600 dark:text-gray-300">
           Connecting to Shruti...
         </div>
@@ -961,6 +952,7 @@ const App: React.FC = () => {
             messages={messages}
             isProcessingAudio={isProcessingAudio}
             isAuroraSpeaking={isAuroraSpeaking}
+            inProgressAuroraMessage={inProgressAuroraMessage}
             playUserAudio={playUserAudio}
             currentlyPlayingUserAudioId={currentlyPlayingUserAudioId}
           />
