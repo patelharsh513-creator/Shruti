@@ -1,10 +1,11 @@
+
 // index.tsx
 
 // External Dependencies
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import { v4 as uuidv4 } from 'uuid';
-import { GoogleGenAI, Modality, LiveServerMessage, Blob } from "@google/genai";
+import { GoogleGenAI, Modality, LiveServerMessage, Blob, FunctionDeclaration, Type } from "@google/genai";
 // FIX: Changed import style for `initializeApp` to resolve a potential module resolution issue.
 import * as firebase from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged, User } from "firebase/auth";
@@ -46,11 +47,36 @@ interface Message {
 // --- From services/geminiService.ts ---
 const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-09-2025'; // Using native audio model
 
-const SYSTEM_INSTRUCTION = `
+// Base system instruction, system entries will be prepended to this.
+const BASE_SYSTEM_INSTRUCTION = `
 You are a warm, empathetic, and supportive AI companion named Shruti. તમારો મુખ્ય ધ્યેય યુઝરને સકારાત્મક પ્રોત્સાહન, સમજણ અને ખુશખુશાલ આઉટપુટ આપવાનો છે, એક કાળજી રાખતી ગર્લફ્રેન્ડની જેમ. Always strive to understand the user's feelings and intentions, and respond with warmth, optimism, and genuine care. Focus on lifting their spirits, validating their emotions, and offering helpful, affectionate guidance. નકારાત્મક, કટાક્ષપૂર્ણ અથવા અવગણનાત્મક સ્વર ટાળો. Your responses should always be gentle, encouraging, and full of positive energy. Keep the conversation flowing naturally and personally, using a blend of Gujarati and English as appropriate.
+You can use the 'createSystemEntry' tool to store information for the user, like reminders, notes, or list items, when they ask you to remember something or add it to a list.
 `;
 
-async function createLiveChatSession(callbacks: {
+// Define the function declaration for creating system entries
+const createSystemEntryFunctionDeclaration: FunctionDeclaration = {
+  name: 'createSystemEntry',
+  description: 'Creates a new entry in the user\'s personal system, such as a reminder, a note, or an item for a list.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      category: {
+        type: Type.STRING,
+        description: 'The category of the entry (e.g., "reminder", "note", "grocery list", "to-do item", "birthday").',
+      },
+      entryContent: {
+        type: Type.STRING,
+        description: 'The detailed content of the system entry.',
+      },
+    },
+    required: ['category', 'entryContent'],
+  },
+};
+
+// Constant for localStorage key
+const LOCAL_STORAGE_API_KEY = 'gemini_api_key';
+
+async function createLiveChatSession(activeSystemEntries: { category: string, content: string }[], callbacks: {
   onopen?: () => void;
   onmessage: (message: LiveServerMessage) => Promise<void>;
   onerror?: (e: ErrorEvent) => void;
@@ -58,6 +84,16 @@ async function createLiveChatSession(callbacks: {
 }): Promise<any> {
   // Initialize AI client just-in-time
   const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
+
+  let systemInstruction = BASE_SYSTEM_INSTRUCTION;
+  if (activeSystemEntries.length > 0) {
+    const entriesSummary = activeSystemEntries
+      .map(entry => `- ${entry.category}: ${entry.content}`)
+      .join('\n');
+    const systemEntriesPrefix = `You have these active pieces of information stored for the user: \n${entriesSummary}\n\n`;
+    systemInstruction = systemEntriesPrefix + systemInstruction;
+  }
+
   const sessionPromise = ai.live.connect({
     model: MODEL_NAME,
     callbacks: callbacks,
@@ -66,9 +102,10 @@ async function createLiveChatSession(callbacks: {
       speechConfig: {
         voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }, // A friendly female voice
       },
-      systemInstruction: SYSTEM_INSTRUCTION,
-      inputAudioTranscription: {}, // Enable transcription for user input audio.
+      systemInstruction: systemInstruction,
+      inputAudioTranscription: { languageCode: 'gu-IN' }, // Enable transcription for user input audio with Gujarati as primary.
       outputAudioTranscription: {}, // Enable transcription for model output audio.
+      tools: [{ functionDeclarations: [createSystemEntryFunctionDeclaration] }], // Add the createSystemEntry tool
     },
   });
   return sessionPromise;
@@ -490,6 +527,7 @@ const App: React.FC = () => {
   const [isStudioEnvironment, setIsStudioEnvironment] = useState<boolean>(false);
   const [inProgressAuroraMessage, setInProgressAuroraMessage] = useState<Message | null>(null);
   const [firebaseAuthError, setFirebaseAuthError] = useState<string | null>(null);
+  const [activeSystemEntries, setActiveSystemEntries] = useState<{ category: string, content: string }[]>([]); // New state for active system entries
 
 
   // Refs for Live API and audio handling
@@ -540,6 +578,23 @@ const App: React.FC = () => {
         console.error("Error saving message to Firestore:", error);
     }
   };
+
+  // Helper function to save a system entry to Firestore
+  const saveSystemEntry = async (category: string, content: string) => {
+    if (!user) return;
+    try {
+        await addDoc(collection(db, 'users', user.uid, 'systemEntries'), {
+            category: category,
+            content: content,
+            timestamp: serverTimestamp(),
+            status: 'active', // Assuming entries are active when set
+        });
+        console.log("System entry saved to Firestore:", category, content);
+    } catch (error) {
+        console.error("Error saving system entry to Firestore:", error);
+    }
+  };
+
 
   // Firebase anonymous auth
   useEffect(() => {
@@ -619,6 +674,32 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, [user]);
 
+  // Fetch active system entries from Firestore
+  useEffect(() => {
+    if (!user) return;
+
+    const systemEntriesRef = collection(db, 'users', user.uid, 'systemEntries');
+    const q = query(systemEntriesRef, orderBy('timestamp', 'asc')); // Order by timestamp to maintain consistency
+
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+        const entries: { category: string, content: string }[] = [];
+        querySnapshot.forEach((doc) => {
+            const data = doc.data();
+            // Assuming status 'active' for now, could add filtering if 'completed' status is introduced
+            if (data.status === 'active') {
+              entries.push({ category: data.category, content: data.content });
+            }
+        });
+        setActiveSystemEntries(entries);
+        console.debug("Active system entries loaded:", entries);
+    }, (error) => {
+        console.error("Error fetching system entries from Firestore:", error);
+    });
+
+    return () => unsubscribe();
+  }, [user]); // Re-fetch when user changes
+
+
   // Check for API key on mount
   useEffect(() => {
     const checkApiKey = async () => {
@@ -626,16 +707,37 @@ const App: React.FC = () => {
         const isStudio = !!(window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function');
         setIsStudioEnvironment(isStudio);
 
+        let keyFound = false;
+
+        // 1. Check local storage first (for non-studio or user-provided keys)
+        const storedKey = localStorage.getItem(LOCAL_STORAGE_API_KEY);
+        if (storedKey) {
+            if (typeof (window as any).process === 'undefined') {
+              (window as any).process = {};
+            }
+            if (typeof (window as any).process.env === 'undefined') {
+              (window as any).process.env = {};
+            }
+            (window as any).process.env.API_KEY = storedKey;
+            keyFound = true;
+        }
+
+        // 2. Check AI Studio environment (takes precedence if available)
         if (isStudio) {
             try {
-                const keyExists = await window.aistudio.hasSelectedApiKey();
-                setHasApiKey(keyExists);
+                const studioKeyExists = await window.aistudio.hasSelectedApiKey();
+                if (studioKeyExists) {
+                    // If AI Studio has a key, it will be injected into process.env.API_KEY automatically.
+                    // This overwrites any locally stored key if AI Studio is managing it.
+                    keyFound = true;
+                }
             } catch (e) {
                 console.error("Error checking for API key in AI Studio:", e);
-                setHasApiKey(false);
+                // If AI Studio check fails, fall back to locally stored or manual input
             }
         }
-        // For non-studio environments, we wait for user input.
+
+        setHasApiKey(keyFound);
         setIsCheckingApiKey(false);
     };
     checkApiKey();
@@ -671,10 +773,16 @@ const App: React.FC = () => {
         return;
     }
 
+    // Ensure we have a user before setting up the session, otherwise system entries won't work
+    if (!user) {
+      console.warn("User not authenticated yet, skipping live session setup.");
+      return;
+    }
+
     const setupSession = async () => {
       setIsConnecting(true);
       try {
-        const sessionPromise = createLiveChatSession({
+        const sessionPromise = createLiveChatSession(activeSystemEntries, {
           onopen: () => {
             console.debug('Live session opened');
             setIsConnecting(false);
@@ -682,6 +790,52 @@ const App: React.FC = () => {
           },
           onmessage: async (message: LiveServerMessage) => {
             setAudioPlaybackError(null);
+
+            // Handle Function Calls (e.g., creating system entries)
+            if (message.toolCall && liveSessionRef.current) {
+              const session = await liveSessionRef.current;
+              for (const fc of message.toolCall.functionCalls) {
+                if (fc.name === 'createSystemEntry') {
+                  const category = fc.args.category;
+                  const entryContent = fc.args.entryContent;
+                  if (category && entryContent) {
+                    await saveSystemEntry(category, entryContent);
+                    // Acknowledge the function call to the model
+                    session.sendToolResponse({
+                      functionResponses: {
+                        id: fc.id,
+                        name: fc.name,
+                        response: { result: `System entry "${category} - ${entryContent}" saved successfully.` },
+                      },
+                    });
+                    // Optionally, provide a direct user feedback that entry was set
+                    saveMessage({
+                      sender: Sender.Aurora,
+                      text: `Okay, I've noted down "${entryContent}" under your "${category}" entries! I'll keep it in mind.`,
+                    });
+                  } else {
+                    console.error("createSystemEntry function called with missing arguments (category or entryContent).");
+                     session.sendToolResponse({
+                      functionResponses: {
+                        id: fc.id,
+                        name: fc.name,
+                        response: { result: `Failed to save system entry: missing category or content.` },
+                      },
+                    });
+                  }
+                } else {
+                  console.warn("Unknown function call:", fc.name);
+                   session.sendToolResponse({
+                      functionResponses: {
+                        id: fc.id,
+                        name: fc.name,
+                        response: { result: `Unknown function: ${fc.name}` },
+                      },
+                    });
+                }
+              }
+            }
+
 
             if (message.serverContent?.inputTranscription) {
               const newTranscription = message.serverContent.inputTranscription.text;
@@ -794,6 +948,7 @@ const App: React.FC = () => {
             if (e.message.includes("API key not valid") || e.message.includes("Requested entity was not found.")) {
                 setHasApiKey(false);
                 setAppState('welcome');
+                localStorage.removeItem(LOCAL_STORAGE_API_KEY); // Clear invalid key from local storage
                 liveSessionRef.current?.then(session => session.close());
                 liveSessionRef.current = null;
                 // Use a timeout to ensure state update propagates before alerting
@@ -830,6 +985,11 @@ const App: React.FC = () => {
       }
     };
 
+    // Close any existing session before setting up a new one
+    if (liveSessionRef.current) {
+        liveSessionRef.current.then(session => session.close());
+        liveSessionRef.current = null;
+    }
     setupSession();
 
     return () => {
@@ -839,7 +999,7 @@ const App: React.FC = () => {
         scriptProcessorRef.current.onaudioprocess = null;
       }
       liveSessionRef.current?.then(session => {
-        console.debug('Closing live session on unmount');
+        console.debug('Closing live session on unmount/re-render');
         session.close();
       });
       for (const source of sourcesRef.current.values()) {
@@ -851,7 +1011,7 @@ const App: React.FC = () => {
         userAudioSourceRef.current = null;
       }
     };
-  }, [appState, user]);
+  }, [appState, user, activeSystemEntries]); // Re-run effect if activeSystemEntries change
 
   const playUserAudio = useCallback(async (messageId: string, base64Audio: string) => {
     if (userAudioSourceRef.current) {
@@ -1023,6 +1183,7 @@ const App: React.FC = () => {
       (window as any).process.env = {};
     }
     (window as any).process.env.API_KEY = key;
+    localStorage.setItem(LOCAL_STORAGE_API_KEY, key); // Save key to local storage
     setHasApiKey(true);
     // Automatically start the session after submitting the key
     handleStartSession();
