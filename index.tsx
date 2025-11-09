@@ -1,13 +1,12 @@
-
 // index.tsx
 
 // External Dependencies
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import { v4 as uuidv4 } from 'uuid';
-import { GoogleGenAI, Modality, LiveServerMessage, Blob, FunctionDeclaration, Type } from "@google/genai";
-// FIX: Changed import style for `initializeApp` to resolve a potential module resolution issue.
-import * as firebase from "firebase/app";
+import { GoogleGenAI, Modality, FunctionDeclaration, Type, Chat } from "@google/genai";
+// FIX: Use `initializeApp` directly from "firebase/app" for standard modular SDK usage.
+import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged, User } from "firebase/auth";
 import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Timestamp } from "firebase/firestore";
 
@@ -24,8 +23,8 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase using the modular SDK
-// FIX: Use `firebase.initializeApp` due to the updated import style.
-const app = firebase.initializeApp(firebaseConfig);
+// FIX: Use `initializeApp` directly.
+const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
@@ -45,7 +44,9 @@ interface Message {
 }
 
 // --- From services/geminiService.ts ---
-const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-09-2025'; // Using native audio model
+const CHAT_MODEL_NAME = 'gemini-2.5-flash';
+const TTS_MODEL_NAME = 'gemini-2.5-flash-preview-tts';
+const STT_MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-09-2025';
 
 // Base system instruction, system entries will be prepended to this.
 const BASE_SYSTEM_INSTRUCTION = `
@@ -76,40 +77,6 @@ const createSystemEntryFunctionDeclaration: FunctionDeclaration = {
 // Constant for localStorage key
 const LOCAL_STORAGE_API_KEY = 'gemini_api_key';
 
-async function createLiveChatSession(activeSystemEntries: { category: string, content: string }[], callbacks: {
-  onopen?: () => void;
-  onmessage: (message: LiveServerMessage) => Promise<void>;
-  onerror?: (e: ErrorEvent) => void;
-  onclose?: (e: CloseEvent) => void;
-}): Promise<any> {
-  // Initialize AI client just-in-time
-  const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
-
-  let systemInstruction = BASE_SYSTEM_INSTRUCTION;
-  if (activeSystemEntries.length > 0) {
-    const entriesSummary = activeSystemEntries
-      .map(entry => `- ${entry.category}: ${entry.content}`)
-      .join('\n');
-    const systemEntriesPrefix = `You have these active pieces of information stored for the user: \n${entriesSummary}\n\n`;
-    systemInstruction = systemEntriesPrefix + systemInstruction;
-  }
-
-  const sessionPromise = ai.live.connect({
-    model: MODEL_NAME,
-    callbacks: callbacks,
-    config: {
-      responseModalities: [Modality.AUDIO], // Must be an array with a single `Modality.AUDIO` element.
-      speechConfig: {
-        voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }, // A friendly female voice
-      },
-      systemInstruction: systemInstruction,
-      inputAudioTranscription: { languageCode: 'gu-IN' }, // Enable transcription for user input audio with Gujarati as primary.
-      outputAudioTranscription: {}, // Enable transcription for model output audio.
-      tools: [{ functionDeclarations: [createSystemEntryFunctionDeclaration] }], // Add the createSystemEntry tool
-    },
-  });
-  return sessionPromise;
-}
 
 function encode(bytes: Uint8Array): string {
   let binary = '';
@@ -147,18 +114,6 @@ async function decodeAudioData(
     }
   }
   return buffer;
-}
-
-function createBlob(data: Float32Array): Blob {
-  const l = data.length;
-  const int16 = new Int16Array(l);
-  for (let i = 0; i < l; i++) {
-    int16[i] = data[i] * 32768;
-  }
-  return {
-    data: encode(new Uint8Array(int16.buffer)),
-    mimeType: 'audio/pcm;rate=16000', // Supported audio MIME type
-  };
 }
 
 
@@ -527,21 +482,19 @@ const App: React.FC = () => {
   const [isStudioEnvironment, setIsStudioEnvironment] = useState<boolean>(false);
   const [inProgressAuroraMessage, setInProgressAuroraMessage] = useState<Message | null>(null);
   const [firebaseAuthError, setFirebaseAuthError] = useState<string | null>(null);
-  const [activeSystemEntries, setActiveSystemEntries] = useState<{ category: string, content: string }[]>([]); // New state for active system entries
+  const [activeSystemEntries, setActiveSystemEntries] = useState<{ category: string, content: string }[]>([]);
 
 
-  // Refs for Live API and audio handling
-  const liveSessionRef = useRef<Promise<any> | null>(null);
+  // Refs
+  const chatSessionRef = useRef<Chat | null>(null);
   const inputAudioContextRef = useRef<AudioContext | null>(null);
   const outputAudioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
-  const nextStartTimeRef = useRef<number>(0);
-  const currentInputTranscriptionRef = useRef<string>('');
-  const currentOutputTranscriptionRef = useRef<string>('');
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set()); // To manage Shruti's audio playback sources
   const userAudioChunksRef = useRef<Float32Array[]>([]); // To collect user's audio chunks for replay
   const userAudioSourceRef = useRef<AudioBufferSourceNode | null>(null); // To manage current user audio playback
+
 
   // Helper function to combine Float32Array chunks into a single Float32Array
   const combineFloat32Arrays = (chunks: Float32Array[]): Float32Array => {
@@ -607,7 +560,7 @@ const App: React.FC = () => {
                 const userCredential = await signInAnonymously(auth);
                 setUser(userCredential.user);
                 setFirebaseAuthError(null); // Clear any previous error
-            } catch (e) {
+            } catch (e: any) { // FIX: Changed type to `any` to handle complex error shapes without TypeScript complaining.
                 console.error("Error signing in anonymously:", e);
                 // Type-safe check for FirebaseError to provide specific user feedback
                 if (e && typeof e === 'object' && 'code' in e && typeof e.code === 'string') {
@@ -727,13 +680,10 @@ const App: React.FC = () => {
             try {
                 const studioKeyExists = await window.aistudio.hasSelectedApiKey();
                 if (studioKeyExists) {
-                    // If AI Studio has a key, it will be injected into process.env.API_KEY automatically.
-                    // This overwrites any locally stored key if AI Studio is managing it.
                     keyFound = true;
                 }
             } catch (e) {
                 console.error("Error checking for API key in AI Studio:", e);
-                // If AI Studio check fails, fall back to locally stored or manual input
             }
         }
 
@@ -767,251 +717,44 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Live Session Setup and Teardown
+  // Initialize Chat Session
   useEffect(() => {
-    if (appState !== 'chatting') {
-        return;
-    }
-
-    // Ensure we have a user before setting up the session, otherwise system entries won't work
-    if (!user) {
-      console.warn("User not authenticated yet, skipping live session setup.");
-      return;
-    }
-
-    const setupSession = async () => {
+      if (appState !== 'chatting' || !user || chatSessionRef.current) {
+          return;
+      }
+      
       setIsConnecting(true);
+      console.log("Initializing chat session...");
+      
       try {
-        const sessionPromise = createLiveChatSession(activeSystemEntries, {
-          onopen: () => {
-            console.debug('Live session opened');
-            setIsConnecting(false);
-            setIsProcessingAudio(false);
-          },
-          onmessage: async (message: LiveServerMessage) => {
-            setAudioPlaybackError(null);
+          const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+          let systemInstruction = BASE_SYSTEM_INSTRUCTION;
+          if (activeSystemEntries.length > 0) {
+              const entriesSummary = activeSystemEntries
+                  .map(entry => `- ${entry.category}: ${entry.content}`)
+                  .join('\n');
+              const systemEntriesPrefix = `You have these active pieces of information stored for the user: \n${entriesSummary}\n\n`;
+              systemInstruction = systemEntriesPrefix + systemInstruction;
+          }
 
-            // Handle Function Calls (e.g., creating system entries)
-            if (message.toolCall && liveSessionRef.current) {
-              const session = await liveSessionRef.current;
-              for (const fc of message.toolCall.functionCalls) {
-                if (fc.name === 'createSystemEntry') {
-                  const category = fc.args.category;
-                  const entryContent = fc.args.entryContent;
-                  if (category && entryContent) {
-                    await saveSystemEntry(category, entryContent);
-                    // Acknowledge the function call to the model
-                    session.sendToolResponse({
-                      functionResponses: {
-                        id: fc.id,
-                        name: fc.name,
-                        response: { result: `System entry "${category} - ${entryContent}" saved successfully.` },
-                      },
-                    });
-                    // Optionally, provide a direct user feedback that entry was set
-                    saveMessage({
-                      sender: Sender.Aurora,
-                      text: `Okay, I've noted down "${entryContent}" under your "${category}" entries! I'll keep it in mind.`,
-                    });
-                  } else {
-                    console.error("createSystemEntry function called with missing arguments (category or entryContent).");
-                     session.sendToolResponse({
-                      functionResponses: {
-                        id: fc.id,
-                        name: fc.name,
-                        response: { result: `Failed to save system entry: missing category or content.` },
-                      },
-                    });
-                  }
-                } else {
-                  console.warn("Unknown function call:", fc.name);
-                   session.sendToolResponse({
-                      functionResponses: {
-                        id: fc.id,
-                        name: fc.name,
-                        response: { result: `Unknown function: ${fc.name}` },
-                      },
-                    });
-                }
-              }
-            }
-
-
-            if (message.serverContent?.inputTranscription) {
-              const newTranscription = message.serverContent.inputTranscription.text;
-              currentInputTranscriptionRef.current = newTranscription;
-              setInput(newTranscription);
-              if (newTranscription.trim()) {
-                setIsProcessingAudio(true);
-              }
-            }
-
-            if (message.serverContent?.outputTranscription) {
-              const text = message.serverContent.outputTranscription.text;
-              currentOutputTranscriptionRef.current += text;
-              setInProgressAuroraMessage({
-                id: 'in-progress-aurora',
-                sender: Sender.Aurora,
-                text: currentOutputTranscriptionRef.current,
-                timestamp: new Date(),
-              });
-            }
-
-            if (message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data) {
-              const base64EncodedAudioString = message.serverContent.modelTurn.parts[0].inlineData.data;
-              setIsAuroraSpeaking(true);
-              setIsProcessingAudio(false);
-              setInProgressAuroraMessage(null);
-
-              if (outputAudioContextRef.current) {
-                if (outputAudioContextRef.current.state === 'suspended') {
-                  await outputAudioContextRef.current.resume();
-                }
-
-                nextStartTimeRef.current = Math.max(
-                  nextStartTimeRef.current,
-                  outputAudioContextRef.current.currentTime,
-                );
-                try {
-                  const audioBuffer = await decodeAudioData(
-                    decode(base64EncodedAudioString),
-                    outputAudioContextRef.current,
-                    24000,
-                    1,
-                  );
-                  const source = outputAudioContextRef.current.createBufferSource();
-                  source.buffer = audioBuffer;
-                  source.connect(outputAudioContextRef.current.destination);
-                  source.addEventListener('ended', () => {
-                    sourcesRef.current.delete(source);
-                    if (sourcesRef.current.size === 0 && !isRecording) {
-                      setIsAuroraSpeaking(false);
-                      setIsProcessingAudio(false);
-                    }
-                  });
-                  source.start(nextStartTimeRef.current);
-                  nextStartTimeRef.current = nextStartTimeRef.current + audioBuffer.duration;
-                  sourcesRef.current.add(source);
-                } catch (audioError) {
-                  console.error('Error decoding or playing audio:', audioError);
-                  setAudioPlaybackError('Oops! There was an issue playing Shruti\'s voice. કૃપા કરીને ફરી પ્રયાસ કરો.');
-                  setIsAuroraSpeaking(false);
-                  setIsProcessingAudio(false);
-                  setTimeout(() => setAudioPlaybackError(null), 5000);
-                }
-              }
-            }
-
-            if (message.serverContent?.interrupted) {
-              console.debug('Shruti interrupted');
-              for (const source of sourcesRef.current.values()) {
-                source.stop();
-              }
-              sourcesRef.current.clear();
-              nextStartTimeRef.current = 0;
-              setIsAuroraSpeaking(false);
-            }
-
-            if (message.serverContent?.turnComplete) {
-              console.debug('Turn complete');
-              setInProgressAuroraMessage(null);
-
-              let userAudioData: string | undefined = undefined;
-              if (userAudioChunksRef.current.length > 0) {
-                  const combinedPcmBytes = convertFloat32ChunksToPcmUint8(userAudioChunksRef.current);
-                  userAudioData = encode(combinedPcmBytes);
-                  userAudioChunksRef.current = [];
-              }
-
-              if (currentInputTranscriptionRef.current.trim()) {
-                saveMessage({
-                    sender: Sender.User,
-                    text: currentInputTranscriptionRef.current,
-                    audioData: userAudioData,
-                });
-              }
-              currentInputTranscriptionRef.current = '';
-              setInput('');
-
-              if (currentOutputTranscriptionRef.current.trim()) {
-                saveMessage({
-                    sender: Sender.Aurora,
-                    text: currentOutputTranscriptionRef.current,
-                });
-              }
-              currentOutputTranscriptionRef.current = '';
-            }
-          },
-          onerror: (e: ErrorEvent) => {
-            console.error('Live session error:', e);
-
-            if (e.message.includes("API key not valid") || e.message.includes("Requested entity was not found.")) {
-                setHasApiKey(false);
-                setAppState('welcome');
-                localStorage.removeItem(LOCAL_STORAGE_API_KEY); // Clear invalid key from local storage
-                liveSessionRef.current?.then(session => session.close());
-                liveSessionRef.current = null;
-                // Use a timeout to ensure state update propagates before alerting
-                setTimeout(() => alert("The provided API key is not valid. Please check your key and try again."), 100);
-                return;
-            }
-
-            setIsConnecting(false);
-            setIsProcessingAudio(false);
-            setIsRecording(false);
-            setIsAuroraSpeaking(false);
-            saveMessage({ sender: Sender.Aurora, text: `I'm sorry, I've lost connection. કૃપા કરીને પાનું તાજું કરો અથવા તમારી API કી તપાસો. Error: ${e.message}` });
-            liveSessionRef.current?.then(session => session.close());
-            liveSessionRef.current = null;
-          },
-          onclose: (e: CloseEvent) => {
-            console.debug('Live session closed:', e);
-            setIsConnecting(false);
-            setIsProcessingAudio(false);
-            setIsRecording(false);
-            setIsAuroraSpeaking(false);
-            if (e.code !== 1000) {
-                 saveMessage({ sender: Sender.Aurora, text: `It seems our chat session closed unexpectedly. Error code: ${e.code}. કૃપા કરીને ફરી પ્રયાસ કરવા માટે પાનું તાજું કરો.` });
-            }
-            liveSessionRef.current = null;
-          },
-        });
-        liveSessionRef.current = sessionPromise;
+          const chat = ai.chats.create({
+              model: CHAT_MODEL_NAME,
+              config: {
+                  systemInstruction: systemInstruction,
+                  tools: [{ functionDeclarations: [createSystemEntryFunctionDeclaration] }],
+              },
+          });
+          chatSessionRef.current = chat;
+          console.log("Chat session initialized.");
       } catch (error) {
-        console.error("Failed to initialize live chat session:", error);
-        setIsConnecting(false);
-        setIsProcessingAudio(false);
-        saveMessage({ sender: Sender.Aurora, text: "Oops! It seems I'm having trouble connecting right now. કૃપા કરીને API કી સમસ્યાઓ અથવા નેટવર્ક સમસ્યાઓ માટે કન્સોલ તપાસો." });
+          console.error("Failed to initialize chat session:", error);
+          saveMessage({ sender: Sender.Aurora, text: "Oops! I couldn't start our chat. Please check your API key and refresh." });
+      } finally {
+          setIsConnecting(false);
       }
-    };
+      
+  }, [appState, user, activeSystemEntries]);
 
-    // Close any existing session before setting up a new one
-    if (liveSessionRef.current) {
-        liveSessionRef.current.then(session => session.close());
-        liveSessionRef.current = null;
-    }
-    setupSession();
-
-    return () => {
-      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
-      if (scriptProcessorRef.current) {
-        scriptProcessorRef.current.disconnect();
-        scriptProcessorRef.current.onaudioprocess = null;
-      }
-      liveSessionRef.current?.then(session => {
-        console.debug('Closing live session on unmount/re-render');
-        session.close();
-      });
-      for (const source of sourcesRef.current.values()) {
-        source.stop();
-      }
-      sourcesRef.current.clear();
-      if (userAudioSourceRef.current) {
-        userAudioSourceRef.current.stop();
-        userAudioSourceRef.current = null;
-      }
-    };
-  }, [appState, user, activeSystemEntries]); // Re-run effect if activeSystemEntries change
 
   const playUserAudio = useCallback(async (messageId: string, base64Audio: string) => {
     if (userAudioSourceRef.current) {
@@ -1078,18 +821,12 @@ const App: React.FC = () => {
         const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
         const inputDataCopy = new Float32Array(inputData);
         userAudioChunksRef.current.push(inputDataCopy);
-
-        liveSessionRef.current?.then((session) => {
-          const pcmBlob = createBlob(inputDataCopy);
-          session.sendRealtimeInput({ media: pcmBlob });
-        });
       };
 
       source.connect(scriptProcessor);
       scriptProcessor.connect(inputAudioContextRef.current.destination);
 
       setIsRecording(true);
-      currentInputTranscriptionRef.current = '';
       setInput('');
 
     } catch (error) {
@@ -1109,26 +846,142 @@ const App: React.FC = () => {
   }, [isRecording, isProcessingAudio, isAuroraSpeaking]);
 
 
+  const handleSendMessage = useCallback(async (text: string, userAudioData?: string) => {
+    if (!chatSessionRef.current) {
+        saveMessage({ sender: Sender.Aurora, text: "My chat session isn't ready. Please wait a moment and try again." });
+        return;
+    }
+
+    setIsProcessingAudio(true);
+    setInput('');
+    saveMessage({ sender: Sender.User, text: text, audioData: userAudioData });
+
+    try {
+        const stream = await chatSessionRef.current.sendMessageStream({ message: text });
+        let fullResponseText = '';
+        let functionCalls: any[] = [];
+        
+        setInProgressAuroraMessage({
+            id: 'in-progress-aurora',
+            sender: Sender.Aurora,
+            text: '',
+            timestamp: new Date(),
+        });
+
+        for await (const chunk of stream) {
+            const chunkText = chunk.text;
+            if (chunkText) {
+                fullResponseText += chunkText;
+                setInProgressAuroraMessage(prev => prev ? { ...prev, text: fullResponseText } : null);
+            }
+            if (chunk.functionCalls) {
+                functionCalls = functionCalls.concat(chunk.functionCalls);
+            }
+        }
+
+        setInProgressAuroraMessage(null); // Hide streaming message
+
+        // Handle function calls if any
+        if (functionCalls.length > 0) {
+          // This example only handles one for simplicity, but you could loop
+          const fc = functionCalls[0];
+           if (fc.name === 'createSystemEntry') {
+              const { category, entryContent } = fc.args;
+              await saveSystemEntry(category, entryContent);
+              const toolResponseText = `Okay, I've noted down "${entryContent}" under your "${category}" entries! I'll keep it in mind.`;
+              // Recurse to get a spoken confirmation from the model
+              await handleSendMessage(toolResponseText);
+           }
+            setIsProcessingAudio(false);
+            return;
+        }
+
+        // Generate and play audio for the text response
+        if (fullResponseText.trim()) {
+            setIsAuroraSpeaking(true);
+            saveMessage({ sender: Sender.Aurora, text: fullResponseText });
+            
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            const ttsResponse = await ai.models.generateContent({
+                model: TTS_MODEL_NAME,
+                contents: [{ parts: [{ text: fullResponseText }] }],
+                config: {
+                    responseModalities: [Modality.AUDIO],
+                    speechConfig: {
+                        voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } },
+                    },
+                },
+            });
+            
+            const base64Audio = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+            if (base64Audio && outputAudioContextRef.current) {
+                if (outputAudioContextRef.current.state === 'suspended') {
+                    await outputAudioContextRef.current.resume();
+                }
+                const audioBuffer = await decodeAudioData(decode(base64Audio), outputAudioContextRef.current, 24000, 1);
+                const source = outputAudioContextRef.current.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(outputAudioContextRef.current.destination);
+                sourcesRef.current.add(source);
+                source.onended = () => {
+                    sourcesRef.current.delete(source);
+                    if (sourcesRef.current.size === 0) {
+                        setIsAuroraSpeaking(false);
+                    }
+                };
+                source.start();
+            } else {
+                 setIsAuroraSpeaking(false);
+            }
+        }
+
+    } catch (error) {
+        console.error("Error during chat send/receive:", error);
+        saveMessage({ sender: Sender.Aurora, text: "I'm sorry, I ran into a problem. Could you try that again?" });
+    } finally {
+        setIsProcessingAudio(false);
+    }
+
+  }, []);
+
   const stopRecording = useCallback(async () => {
     if (!isRecording) return;
     setIsRecording(false);
+    setIsProcessingAudio(true); // Thinking starts now
 
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     if (scriptProcessorRef.current) {
         scriptProcessorRef.current.disconnect();
         scriptProcessorRef.current.onaudioprocess = null;
     }
-    mediaStreamRef.current = null;
-    scriptProcessorRef.current = null;
 
-    liveSessionRef.current?.then((session) => {
-      session.sendRealtimeInput({ stop: true });
-    });
-
-    if (currentInputTranscriptionRef.current.trim() || userAudioChunksRef.current.length > 0) {
-        setIsProcessingAudio(true);
+    if (userAudioChunksRef.current.length === 0) {
+        setIsProcessingAudio(false);
+        return;
     }
-  }, [isRecording]);
+
+    const userAudioData = convertFloat32ChunksToPcmUint8(userAudioChunksRef.current);
+    const base64UserAudio = encode(userAudioData);
+
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const response = await ai.models.generateContent({
+            model: STT_MODEL_NAME,
+            contents: { parts: [{ inlineData: { mimeType: 'audio/pcm;rate=16000', data: base64UserAudio } }] }
+        });
+
+        const transcribedText = response.text;
+        if (transcribedText.trim()) {
+            await handleSendMessage(transcribedText, base64UserAudio);
+        }
+    } catch (error) {
+        console.error("Error transcribing audio:", error);
+        saveMessage({ sender: Sender.Aurora, text: "I had trouble understanding that. Please try again." });
+    } finally {
+        userAudioChunksRef.current = [];
+        setIsProcessingAudio(false);
+    }
+  }, [isRecording, handleSendMessage]);
 
   const toggleRecording = useCallback(() => {
     if (isRecording) {
@@ -1139,27 +992,9 @@ const App: React.FC = () => {
   }, [isRecording, startRecording, stopRecording]);
 
   const handleSendText = useCallback(async () => {
-    if (!input.trim() || isProcessingAudio || isAuroraSpeaking || isRecording || !liveSessionRef.current) return;
-
-    const textToSend = input;
-    setInput('');
-    setIsProcessingAudio(true);
-    
-    saveMessage({
-      sender: Sender.User,
-      text: textToSend,
-    });
-
-    try {
-      await liveSessionRef.current?.then(session => {
-        session.sendRealtimeInput({ text: textToSend });
-      });
-    } catch (error) {
-      console.error("Error sending text message to Gemini Live:", error);
-      saveMessage({ sender: Sender.Aurora, text: "I'm sorry, I encountered an error and couldn't process your message. કૃપા કરીને ફરી પ્રયાસ કરો!" });
-      setIsProcessingAudio(false);
-    }
-  }, [input, isProcessingAudio, isAuroraSpeaking, isRecording]);
+    if (!input.trim() || isProcessingAudio || isAuroraSpeaking || isRecording) return;
+    handleSendMessage(input);
+  }, [input, isProcessingAudio, isAuroraSpeaking, isRecording, handleSendMessage]);
 
   const handleSelectApiKey = async () => {
     if(window.aistudio) {
@@ -1171,10 +1006,6 @@ const App: React.FC = () => {
     }
   };
 
-  // FIX: Reworked to fix a TypeScript error and a potential runtime ReferenceError
-  // when polyfilling `process.env` in the browser for API key submission.
-  // The new implementation safely checks for `window.process.env` and creates it
-  // if it doesn't exist, while using type casting to satisfy the TypeScript compiler.
   const handleApiKeySubmit = (key: string) => {
     if (typeof (window as any).process === 'undefined') {
       (window as any).process = {};
@@ -1185,7 +1016,6 @@ const App: React.FC = () => {
     (window as any).process.env.API_KEY = key;
     localStorage.setItem(LOCAL_STORAGE_API_KEY, key); // Save key to local storage
     setHasApiKey(true);
-    // Automatically start the session after submitting the key
     handleStartSession();
   };
 
@@ -1224,7 +1054,9 @@ const App: React.FC = () => {
   return (
     <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
       <header className="bg-purple-700 dark:bg-purple-900 text-white p-4 shadow-md sticky top-0 z-10">
-        <h1 className="text-xl font-bold text-center">Shruti - તમારી AI Girlfriend</h1>
+        <div className="max-w-2xl mx-auto flex items-center justify-between">
+          <h1 className="text-xl font-bold">Shruti - તમારી AI Girlfriend</h1>
+        </div>
       </header>
 
       {isConnecting && messages.length === 0 ? (
