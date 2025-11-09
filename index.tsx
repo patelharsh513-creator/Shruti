@@ -6,6 +6,9 @@ import ReactDOM from 'react-dom/client';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenAI, Modality, LiveServerMessage, Blob } from "@google/genai";
 
+// Initialize AI client at the module level
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
 // --- From types.ts ---
 enum Sender {
   User = 'user',
@@ -33,8 +36,6 @@ async function createLiveChatSession(callbacks: {
   onerror?: (e: ErrorEvent) => void;
   onclose?: (e: CloseEvent) => void;
 }): Promise<any> {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
   const sessionPromise = ai.live.connect({
     model: MODEL_NAME,
     callbacks: callbacks,
@@ -398,27 +399,18 @@ const App: React.FC = () => {
 
   // Initialize audio contexts on mount
   useEffect(() => {
-    inputAudioContextRef.current = new (window.AudioContext)({ sampleRate: 16000 });
-    outputAudioContextRef.current = new (window.AudioContext)({ sampleRate: 24000 });
-
-    const resumeAudioContexts = async () => {
-      if (inputAudioContextRef.current?.state === 'suspended') {
-        await inputAudioContextRef.current.resume();
-        console.debug('Input AudioContext resumed on mount.');
-      }
-      if (outputAudioContextRef.current?.state === 'suspended') {
-        await outputAudioContextRef.current.resume();
-        console.debug('Output AudioContext resumed on mount.');
-      }
-    };
-    
-    // Resume contexts on user interaction (handled by start button)
-    // but also try on mount for resilience
-    resumeAudioContexts();
+    if (!inputAudioContextRef.current) {
+        inputAudioContextRef.current = new (window.AudioContext)({ sampleRate: 16000 });
+    }
+    if (!outputAudioContextRef.current) {
+        outputAudioContextRef.current = new (window.AudioContext)({ sampleRate: 24000 });
+    }
 
     return () => {
       inputAudioContextRef.current?.close();
+      inputAudioContextRef.current = null;
       outputAudioContextRef.current?.close();
+      outputAudioContextRef.current = null;
     };
   }, []);
 
@@ -965,9 +957,25 @@ const App: React.FC = () => {
     }
   }, [input, isProcessingAudio, isAuroraSpeaking, isRecording, stopRecording]);
 
+  const handleStartSession = useCallback(async () => {
+    try {
+      if (inputAudioContextRef.current?.state === 'suspended') {
+        await inputAudioContextRef.current.resume();
+        console.debug('Input AudioContext resumed on start.');
+      }
+      if (outputAudioContextRef.current?.state === 'suspended') {
+        await outputAudioContextRef.current.resume();
+        console.debug('Output AudioContext resumed on start.');
+      }
+      setIsSessionActive(true);
+    } catch (error) {
+        console.error("Error resuming audio contexts:", error);
+        alert("Could not start the audio session. Please check your browser permissions and refresh the page.");
+    }
+  }, []);
 
   if (!isSessionActive) {
-      return <WelcomeScreen onStart={() => setIsSessionActive(true)} />;
+      return <WelcomeScreen onStart={handleStartSession} />;
   }
 
   return (
