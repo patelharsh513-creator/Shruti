@@ -22,11 +22,6 @@ interface Message {
 
 // --- From services/geminiService.ts ---
 const MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-09-2025'; // Using native audio model
-const API_KEY = process.env.API_KEY;
-
-if (!API_KEY) {
-  console.error("API_KEY is not set. Please ensure it's configured in your environment.");
-}
 
 const SYSTEM_INSTRUCTION = `
 You are a warm, empathetic, and supportive AI companion named Shruti. તમારો મુખ્ય ધ્યેય યુઝરને સકારાત્મક પ્રોત્સાહન, સમજણ અને ખુશખુશાલ આઉટપુટ આપવાનો છે, એક કાળજી રાખતી ગર્લફ્રેન્ડની જેમ. Always strive to understand the user's feelings and intentions, and respond with warmth, optimism, and genuine care. Focus on lifting their spirits, validating their emotions, and offering helpful, affectionate guidance. નકારાત્મક, કટાક્ષપૂર્ણ અથવા અવગણનાત્મક સ્વર ટાળો. Your responses should always be gentle, encouraging, and full of positive energy. Keep the conversation flowing naturally and personally, using a blend of Gujarati and English as appropriate.
@@ -38,11 +33,12 @@ async function createLiveChatSession(callbacks: {
   onerror?: (e: ErrorEvent) => void;
   onclose?: (e: CloseEvent) => void;
 }): Promise<any> {
-  if (!API_KEY) {
+  const apiKey = process.env.API_KEY;
+  if (!apiKey) {
     throw new Error("Gemini API Key is not configured.");
   }
 
-  const ai = new GoogleGenAI({ apiKey: API_KEY });
+  const ai = new GoogleGenAI({ apiKey });
 
   const sessionPromise = ai.live.connect({
     model: MODEL_NAME,
