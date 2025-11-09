@@ -358,12 +358,6 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, 
 
 
 // --- From App.tsx ---
-// VAD Constants - these may need tuning based on environment and microphone
-const VAD_THRESHOLD = 0.01; // Minimum RMS amplitude to consider a chunk as speech (values are -1 to 1)
-const VAD_SPEECH_START_DELAY_MS = 200; // How long to detect continuous speech before starting to send
-const VAD_SILENCE_END_DELAY_MS = 1200; // How long to detect continuous silence after speech before stopping send
-const VAD_PROCESSING_INTERVAL_MS = 100; // How often to run the VAD logic
-
 const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState<string>(''); // For current user transcription or text input
@@ -390,24 +384,6 @@ const App: React.FC = () => {
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set()); // To manage Shruti's audio playback sources
   const userAudioChunksRef = useRef<Float32Array[]>([]); // To collect user's audio chunks for replay
   const userAudioSourceRef = useRef<AudioBufferSourceNode | null>(null); // To manage current user audio playback
-
-  // VAD Refs
-  const vadBufferRef = useRef<Float32Array[]>([]); // Buffer for raw incoming audio chunks
-  const speechStartBufferRef = useRef<Float32Array[]>([]); // Buffer for chunks before confirmed speech
-  const isVoiceActiveRef = useRef<boolean>(false); // True if currently sending voice data
-  const lastSpeechActivityTimeRef = useRef<number | null>(null); // Timestamp of last detected speech above threshold
-  const vadProcessingIntervalIdRef = useRef<number | null>(null); // For the VAD interval timer
-  const speechStartTimerIdRef = useRef<number | null>(null); // Timer for VAD_SPEECH_START_DELAY_MS
-
-
-  // Helper function to calculate RMS magnitude of audio chunk
-  const calculateRMS = (data: Float32Array): number => {
-    let sumSquares = 0;
-    for (let i = 0; i < data.length; i++) {
-      sumSquares += data[i] * data[i];
-    }
-    return Math.sqrt(sumSquares / data.length);
-  };
 
   // Helper function to combine Float32Array chunks into a single Float32Array
   const combineFloat32Arrays = (chunks: Float32Array[]): Float32Array => {
@@ -444,7 +420,7 @@ const App: React.FC = () => {
             setHasApiKey(keySelected);
         } else {
             console.warn("window.aistudio not found. Checking for process.env.API_KEY.");
-            setHasApiKey(!!process.env.API_KEY); 
+            setHasApiKey(!!process.env.API_KEY);
         }
         setIsCheckingApiKey(false);
     };
@@ -466,14 +442,6 @@ const App: React.FC = () => {
       outputAudioContextRef.current?.close();
       outputAudioContextRef.current = null;
     };
-  }, []);
-
-  const sendBufferedAudio = useCallback(async (chunks: Float32Array[], session: any, isFinalChunk = false) => {
-    if (chunks.length === 0 && !isFinalChunk) return;
-    const combinedFloat32 = chunks.length > 0 ? combineFloat32Arrays(chunks) : new Float32Array(0);
-    const pcmBlob = createBlob(combinedFloat32);
-    session.sendRealtimeInput({ media: pcmBlob, stop: isFinalChunk });
-    console.debug(`[VAD-SEND] Sent audio chunk (length: ${combinedFloat32.length}, isFinal: ${isFinalChunk}, voiceActive: ${isVoiceActiveRef.current ? 'YES' : 'NO'})`);
   }, []);
 
   // Live Session Setup and Teardown
@@ -504,9 +472,11 @@ const App: React.FC = () => {
             setAudioPlaybackError(null);
 
             if (message.serverContent?.inputTranscription) {
-              currentInputTranscriptionRef.current = message.serverContent.inputTranscription.text;
-              setInput(currentInputTranscriptionRef.current);
-              if (currentInputTranscriptionRef.current.trim()) {
+              const newTranscription = message.serverContent.inputTranscription.text;
+              currentInputTranscriptionRef.current = newTranscription;
+              setInput(newTranscription);
+              // Show thinking spinner as soon as we get a transcript back
+              if (newTranscription.trim()) {
                 setIsProcessingAudio(true);
               }
             }
@@ -546,7 +516,7 @@ const App: React.FC = () => {
               const base64EncodedAudioString = message.serverContent.modelTurn.parts[0].inlineData.data;
               setIsAuroraSpeaking(true);
               setIsProcessingAudio(false);
-              
+
               if (outputAudioContextRef.current) {
                 if (outputAudioContextRef.current.state === 'suspended') {
                   await outputAudioContextRef.current.resume();
@@ -599,7 +569,7 @@ const App: React.FC = () => {
 
             if (message.serverContent?.turnComplete) {
               console.debug('Turn complete');
-              
+
               let userAudioData: string | undefined = undefined;
               if (userAudioChunksRef.current.length > 0) {
                   const combinedPcmBytes = convertFloat32ChunksToPcmUint8(userAudioChunksRef.current);
@@ -730,17 +700,9 @@ const App: React.FC = () => {
 
     return () => {
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
-      scriptProcessorRef.current?.disconnect();
-      if (inputAudioContextRef.current && scriptProcessorRef.current) {
-          scriptProcessorRef.current.onaudioprocess = null;
-      }
-      if (vadProcessingIntervalIdRef.current) {
-        clearInterval(vadProcessingIntervalIdRef.current);
-        vadProcessingIntervalIdRef.current = null;
-      }
-      if (speechStartTimerIdRef.current) {
-        clearTimeout(speechStartTimerIdRef.current);
-        speechStartTimerIdRef.current = null;
+      if (scriptProcessorRef.current) {
+        scriptProcessorRef.current.disconnect();
+        scriptProcessorRef.current.onaudioprocess = null;
       }
       liveSessionRef.current?.then(session => {
         console.debug('Closing live session on unmount');
@@ -755,7 +717,7 @@ const App: React.FC = () => {
         userAudioSourceRef.current = null;
       }
     };
-  }, [isSessionActive, sendBufferedAudio]);
+  }, [isSessionActive]);
 
   const playUserAudio = useCallback(async (messageId: string, base64Audio: string) => {
     if (userAudioSourceRef.current) {
@@ -802,7 +764,7 @@ const App: React.FC = () => {
 
 
   const startRecording = useCallback(async () => {
-    if (isRecording || isProcessingAudio || !inputAudioContextRef.current) return;
+    if (isRecording || isProcessingAudio || isAuroraSpeaking || !inputAudioContextRef.current) return;
 
     try {
       if (inputAudioContextRef.current.state === 'suspended') {
@@ -817,109 +779,27 @@ const App: React.FC = () => {
       const scriptProcessor = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
       scriptProcessorRef.current = scriptProcessor;
 
-      userAudioChunksRef.current = [];
-      vadBufferRef.current = [];
-      speechStartBufferRef.current = [];
-      isVoiceActiveRef.current = false;
-      lastSpeechActivityTimeRef.current = null;
-      if (speechStartTimerIdRef.current) {
-        clearTimeout(speechStartTimerIdRef.current);
-        speechStartTimerIdRef.current = null;
-      }
+      userAudioChunksRef.current = []; // Clear previous recording chunks
 
       scriptProcessor.onaudioprocess = (audioProcessingEvent) => {
         const inputData = audioProcessingEvent.inputBuffer.getChannelData(0);
-        userAudioChunksRef.current.push(new Float32Array(inputData));
-        vadBufferRef.current.push(new Float32Array(inputData));
+        const inputDataCopy = new Float32Array(inputData);
+        userAudioChunksRef.current.push(inputDataCopy);
+
+        // Stream audio data to the live session
+        liveSessionRef.current?.then((session) => {
+          const pcmBlob = createBlob(inputDataCopy);
+          session.sendRealtimeInput({ media: pcmBlob });
+        });
       };
 
       source.connect(scriptProcessor);
       scriptProcessor.connect(inputAudioContextRef.current.destination);
 
       setIsRecording(true);
-      setIsProcessingAudio(true);
       currentInputTranscriptionRef.current = '';
       setInput('');
-
-      liveSessionRef.current?.then(session => session.sendRealtimeInput({ media: { data: '', mimeType: 'audio/pcm;rate=16000' }, stop: true }));
-      console.debug('Microphone recording started, VAD active.');
-
-      vadProcessingIntervalIdRef.current = window.setInterval(async () => {
-          const session = await liveSessionRef.current;
-          if (!session || !isRecording) {
-              return;
-          }
-
-          const now = Date.now();
-          const bufferedChunks = [...vadBufferRef.current]; 
-          vadBufferRef.current = []; 
-
-          let currentMagnitude = 0;
-          if (bufferedChunks.length > 0) {
-            currentMagnitude = calculateRMS(combineFloat32Arrays(bufferedChunks));
-          }
-          console.debug(`[VAD-INTERVAL] Magnitude: ${currentMagnitude.toFixed(4)}, VoiceActive: ${isVoiceActiveRef.current ? 'YES' : 'NO'}, SpeechStartTimer: ${speechStartTimerIdRef.current !== null}, LastSpeechActivity: ${lastSpeechActivityTimeRef.current ? now - lastSpeechActivityTimeRef.current + 'ms' : 'N/A'}`);
-
-          const isSpeechDetectedInCurrentBuffer = currentMagnitude > VAD_THRESHOLD;
-
-          if (isSpeechDetectedInCurrentBuffer) {
-              lastSpeechActivityTimeRef.current = now;
-          }
-
-          if (!isVoiceActiveRef.current) {
-              if (bufferedChunks.length > 0) {
-                  speechStartBufferRef.current.push(...bufferedChunks);
-                  const maxSpeechStartBufferSize = Math.ceil(16000 * (VAD_SILENCE_END_DELAY_MS / 1000));
-                  while (speechStartBufferRef.current.length > maxSpeechStartBufferSize) {
-                      speechStartBufferRef.current.shift();
-                  }
-              }
-
-              if (lastSpeechActivityTimeRef.current !== null && (now - lastSpeechActivityTimeRef.current) < VAD_SPEECH_START_DELAY_MS) {
-                  if (!speechStartTimerIdRef.current) {
-                    console.debug(`[VAD-START] Starting speech confirmation timer for ${VAD_SPEECH_START_DELAY_MS}ms.`);
-                    speechStartTimerIdRef.current = window.setTimeout(async () => {
-                      if (isRecording && lastSpeechActivityTimeRef.current !== null && (Date.now() - lastSpeechActivityTimeRef.current) < VAD_SPEECH_START_DELAY_MS + (VAD_PROCESSING_INTERVAL_MS / 2)) {
-                        isVoiceActiveRef.current = true;
-                        if (speechStartBufferRef.current.length > 0) {
-                          console.debug(`[VAD-START] Speech confirmed. Sending initial buffer (length: ${speechStartBufferRef.current.length}).`);
-                          await sendBufferedAudio(speechStartBufferRef.current, session);
-                          speechStartBufferRef.current = [];
-                        }
-                        console.debug('[VAD] Voice activity set to TRUE, started sending.');
-                      } else {
-                        if (!isVoiceActiveRef.current) {
-                          speechStartBufferRef.current = [];
-                          currentInputTranscriptionRef.current = '';
-                          setInput('');
-                        }
-                        console.debug('[VAD] Speech start aborted (not sustained or recording stopped). Clearing input/buffer.');
-                      }
-                      speechStartTimerIdRef.current = null;
-                    }, VAD_SPEECH_START_DELAY_MS);
-                  }
-              } else if (speechStartTimerIdRef.current !== null) {
-                  console.debug('[VAD-START] Speech start timer cleared due to insufficient sustained speech.');
-                  clearTimeout(speechStartTimerIdRef.current);
-                  speechStartTimerIdRef.current = null;
-                  speechStartBufferRef.current = [];
-                  currentInputTranscriptionRef.current = '';
-                  setInput('');
-              }
-          } else {
-              if (bufferedChunks.length > 0) {
-                  await sendBufferedAudio(bufferedChunks, session);
-              }
-
-              if (lastSpeechActivityTimeRef.current !== null && (now - lastSpeechActivityTimeRef.current) > VAD_SILENCE_END_DELAY_MS) {
-                  console.debug('[VAD-STOP] Silence detected after speech, stopping voice activity.');
-                  isVoiceActiveRef.current = false;
-                  await sendBufferedAudio([], session, true); 
-              }
-          }
-
-      }, VAD_PROCESSING_INTERVAL_MS);
-
+      console.debug('Microphone recording started.');
 
     } catch (error) {
       console.error("Error starting recording:", error);
@@ -935,47 +815,34 @@ const App: React.FC = () => {
       setIsRecording(false);
       setIsProcessingAudio(false);
     }
-  }, [isRecording, isProcessingAudio, sendBufferedAudio]);
+  }, [isRecording, isProcessingAudio, isAuroraSpeaking]);
 
 
   const stopRecording = useCallback(async () => {
     if (!isRecording) return;
+    setIsRecording(false); // Set state immediately to update UI and prevent re-entry
 
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
-    scriptProcessorRef.current?.disconnect();
-    if (inputAudioContextRef.current && scriptProcessorRef.current) {
-        scriptProcessorRef.current.onaudioprocess = null;
+    if (scriptProcessorRef.current) {
+        scriptProcessorRef.current.disconnect();
+        scriptProcessorRef.current.onaudioprocess = null; // Important to remove the listener
     }
     mediaStreamRef.current = null;
     scriptProcessorRef.current = null;
 
-    if (vadProcessingIntervalIdRef.current) {
-        clearInterval(vadProcessingIntervalIdRef.current);
-        vadProcessingIntervalIdRef.current = null;
-        console.debug('VAD: Processing interval cleared on stop recording.');
-    }
-    if (speechStartTimerIdRef.current) {
-      clearTimeout(speechStartTimerIdRef.current);
-      speechStartTimerIdRef.current = null;
-      console.debug('VAD: Speech start timer cleared on stop recording.');
+    // Send a stop signal to indicate the end of user's audio turn
+    liveSessionRef.current?.then((session) => {
+      session.sendRealtimeInput({ stop: true });
+      console.debug('Sent stop signal to end user turn.');
+    });
+
+    // We expect a response, so show the thinking state if there was input
+    if (currentInputTranscriptionRef.current.trim() || userAudioChunksRef.current.length > 0) {
+        setIsProcessingAudio(true);
     }
 
-    const session = await liveSessionRef.current;
-    if (session) {
-        const remainingChunks = [...speechStartBufferRef.current, ...vadBufferRef.current];
-        await sendBufferedAudio(remainingChunks, session, true);
-        console.debug('VAD: Sent remaining buffered audio as FINAL chunk on stop recording or sent empty stop signal.');
-    }
-
-    vadBufferRef.current = [];
-    speechStartBufferRef.current = [];
-    isVoiceActiveRef.current = false;
-    lastSpeechActivityTimeRef.current = null;
-    
-    setIsRecording(false);
-    setIsProcessingAudio(true);
-    console.debug('Microphone recording stopped, VAD mechanisms cleared.');
-  }, [isRecording, sendBufferedAudio]);
+    console.debug('Microphone recording stopped.');
+  }, [isRecording]);
 
   const toggleRecording = useCallback(() => {
     if (isRecording) {
@@ -1048,7 +915,7 @@ const App: React.FC = () => {
   }, []);
 
   if (!isSessionActive) {
-      return <WelcomeScreen 
+      return <WelcomeScreen
           onStart={handleStartSession}
           onSelectApiKey={handleSelectApiKey}
           hasApiKey={hasApiKey}
