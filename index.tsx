@@ -34,7 +34,7 @@ async function createLiveChatSession(callbacks: {
   onclose?: (e: CloseEvent) => void;
 }): Promise<any> {
   // Initialize AI client just-in-time
-  const ai = new GoogleGenAI({});
+  const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
   const sessionPromise = ai.live.connect({
     model: MODEL_NAME,
     callbacks: callbacks,
@@ -157,7 +157,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ messages, isProcessingAudio, is
           >
             {message.sender === Sender.User && message.audioData && (
               <button
-                onClick={() => playUserAudio(message.id, message.audioData)}
+                onClick={() => playUserAudio(message.id, message.audioData!)}
                 className={`flex-shrink-0 mr-2 p-1 rounded-full ${
                   currentlyPlayingUserAudioId === message.id ? 'bg-red-500' : 'bg-blue-500 hover:bg-blue-600'
                 } text-white transition-colors duration-200`}
