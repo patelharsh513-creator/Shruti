@@ -12,7 +12,7 @@ import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTim
 
 // --- Firebase Configuration ---
 const firebaseConfig = {
-  apiKey: "AIzaSyCUdWUxt-j63v-Dkcrauy32cbe7EvYHRZA",
+  apiKey: "AIzaSyCsPfOwOG7mjDGJYVRsHi1ND8mIQ1umHnE",
   authDomain: "shruti-9c12b.firebaseapp.com",
   databaseURL: "https://shruti-9c12b-default-rtdb.europe-west1.firebasedatabase.app",
   projectId: "shruti-9c12b",
