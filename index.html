@@ -8,6 +8,12 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Babel Standalone for in-browser TSX transpilation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Prevent crash in non-AI Studio environments -->
+    <script>
+        if (typeof process === 'undefined') {
+            window.process = { env: {} };
+        }
+    </script>
 <script type="importmap">
 {
   "imports": {
