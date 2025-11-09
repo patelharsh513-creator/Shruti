@@ -167,7 +167,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ messages, isProcessingAudio, is
           >
             {message.sender === Sender.User && message.audioData && (
               <button
-                onClick={() => playUserAudio(message.id, message.audioData!)}
+                onClick={() => playUserAudio(message.id, message.audioData)}
                 className={`flex-shrink-0 mr-2 p-1 rounded-full ${
                   currentlyPlayingUserAudioId === message.id ? 'bg-red-500' : 'bg-blue-500 hover:bg-blue-600'
                 } text-white transition-colors duration-200`}
@@ -881,7 +881,7 @@ const App: React.FC = () => {
       let errorMessage = "Failed to get microphone access. કૃપા કરીને ખાતરી કરો કે તમારો માઇક્રોફોન કનેક્ટેડ છે અને પરવાનગીઓ આપવામાં આવી છે.";
       if (error instanceof DOMException) {
           if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
-              errorMessage = "Microphone access denied. કૃપા કરીને બ્રાઉઝર સેટિંગ્સમાં માઇક્રોફોનની પરવાનગી આપો.";
+              errorMessage = "Microphone access denied. કૃપા કરીને બ્રાઝર સેટિંગ્સમાં માઇક્રોફોનની પરવાનગી આપો.";
           } else if (error.name === "NotFoundError") {
               errorMessage = "No microphone found. કૃપા કરીને ખાતરી કરો કે માઇક્રોફોન કનેક્ટેડ છે.";
           }
