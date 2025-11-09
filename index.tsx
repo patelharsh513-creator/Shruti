@@ -301,9 +301,10 @@ interface WelcomeScreenProps {
   onSelectApiKey: () => void;
   hasApiKey: boolean;
   isCheckingApiKey: boolean;
+  isStudioEnvironment: boolean;
 }
 
-const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, hasApiKey, isCheckingApiKey }) => {
+const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, hasApiKey, isCheckingApiKey, isStudioEnvironment }) => {
   return (
     <div className="flex flex-col h-screen items-center justify-center bg-gray-50 dark:bg-gray-900 text-center p-6">
         <div className="max-w-md">
@@ -327,7 +328,7 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, 
                     </svg>
                     Start Chatting
                 </button>
-            ) : (
+            ) : isStudioEnvironment ? (
                 <div className="space-y-4">
                   <button
                     onClick={onSelectApiKey}
@@ -340,6 +341,13 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, 
                     <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-500">
                       ai.google.dev/gemini-api/docs/billing
                     </a>.
+                  </p>
+                </div>
+            ) : (
+                <div className="space-y-4 p-4 border border-red-500/50 bg-red-500/10 rounded-lg max-w-md w-full">
+                  <h3 className="text-lg font-semibold text-red-700 dark:text-red-400">Configuration Error</h3>
+                  <p className="text-gray-600 dark:text-gray-400">
+                    This application requires an API key to function. Please run this in an environment where an API key is configured, such as Google AI Studio.
                   </p>
                 </div>
             )}
@@ -368,6 +376,7 @@ const App: React.FC = () => {
   const [isSessionActive, setIsSessionActive] = useState<boolean>(false);
   const [hasApiKey, setHasApiKey] = useState<boolean>(false);
   const [isCheckingApiKey, setIsCheckingApiKey] = useState<boolean>(true);
+  const [isStudioEnvironment, setIsStudioEnvironment] = useState<boolean>(false);
 
   // Refs for Live API and audio handling
   const liveSessionRef = useRef<Promise<any> | null>(null);
@@ -427,13 +436,15 @@ const App: React.FC = () => {
   useEffect(() => {
     const checkApiKey = async () => {
         setIsCheckingApiKey(true);
-        if (window.aistudio) {
+        const isStudio = !!window.aistudio;
+        setIsStudioEnvironment(isStudio);
+
+        if (isStudio) {
             const keySelected = await window.aistudio.hasSelectedApiKey();
             setHasApiKey(keySelected);
         } else {
-            // Fallback for local development or different environment
-            console.warn("window.aistudio not found. Assuming API key is set.");
-            setHasApiKey(true); 
+            console.warn("window.aistudio not found. Checking for process.env.API_KEY.");
+            setHasApiKey(!!process.env.API_KEY); 
         }
         setIsCheckingApiKey(false);
     };
@@ -1042,6 +1053,7 @@ const App: React.FC = () => {
           onSelectApiKey={handleSelectApiKey}
           hasApiKey={hasApiKey}
           isCheckingApiKey={isCheckingApiKey}
+          isStudioEnvironment={isStudioEnvironment}
       />;
   }
 
