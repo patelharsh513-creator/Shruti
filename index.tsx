@@ -1,3 +1,4 @@
+
 // index.tsx
 
 // External Dependencies
@@ -176,10 +177,10 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ messages, isProcessingAudio, is
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                   {currentlyPlayingUserAudioId === message.id ? (
                     // Stop icon (square)
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9 8.5a.5.5 0 01.5-.5h1a.5.5 0 01.5.5v3a.5.5 0 01-.5.5h-1a.5.5 0 01-.5-.5v-3z" clipRule="evenodd" />
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 8a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1H9a1 1 0 01-1-1V8z" clipRule="evenodd" />
                   ) : (
                     // Play icon (triangle)
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.5 8a.5.5 0 00-.5.5v3a.5.5 0 001 0v-3a.5.5 0 00-.5-.5z" clipRule="evenodd" />
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 8.168A1 1 0 008 9.062v1.876a1 1 0 001.555.832l3-1.438a1 1 0 000-1.664l-3-1.438z" clipRule="evenodd" />
                   )}
                 </svg>
               </button>
