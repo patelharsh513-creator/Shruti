@@ -412,16 +412,26 @@ const App: React.FC = () => {
   useEffect(() => {
     const checkApiKey = async () => {
         setIsCheckingApiKey(true);
-        const isStudio = !!window.aistudio;
+        // More robustly check for AI Studio environment
+        const isStudio = !!(window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function');
         setIsStudioEnvironment(isStudio);
 
+        let keyExists = false;
         if (isStudio) {
-            const keySelected = await window.aistudio.hasSelectedApiKey();
-            setHasApiKey(keySelected);
+            try {
+                keyExists = await window.aistudio.hasSelectedApiKey();
+            } catch (e) {
+                console.error("Error checking for API key in AI Studio:", e);
+                keyExists = false;
+            }
         } else {
-            console.warn("window.aistudio not found. Checking for process.env.API_KEY.");
-            setHasApiKey(!!process.env.API_KEY);
+            // Outside of AI Studio, this app is not expected to work without manual configuration.
+            // The check for process.env.API_KEY is a fallback for other potential environments
+            // but is not expected to work for a user opening the HTML file directly.
+            console.warn("window.aistudio not found. The app may not function correctly as it's designed for environments like Google AI Studio where an API key is provided.");
+            keyExists = !!process.env.API_KEY;
         }
+        setHasApiKey(keyExists);
         setIsCheckingApiKey(false);
     };
     checkApiKey();
