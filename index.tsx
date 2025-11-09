@@ -6,9 +6,6 @@ import ReactDOM from 'react-dom/client';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenAI, Modality, LiveServerMessage, Blob } from "@google/genai";
 
-// Initialize AI client at the module level
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 // --- From types.ts ---
 enum Sender {
   User = 'user',
@@ -36,6 +33,8 @@ async function createLiveChatSession(callbacks: {
   onerror?: (e: ErrorEvent) => void;
   onclose?: (e: CloseEvent) => void;
 }): Promise<any> {
+  // Initialize AI client just-in-time
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const sessionPromise = ai.live.connect({
     model: MODEL_NAME,
     callbacks: callbacks,
@@ -299,9 +298,12 @@ const MessageInput: React.FC<MessageInputProps> = ({
 // --- New WelcomeScreen Component ---
 interface WelcomeScreenProps {
   onStart: () => void;
+  onSelectApiKey: () => void;
+  hasApiKey: boolean;
+  isCheckingApiKey: boolean;
 }
 
-const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart }) => {
+const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, hasApiKey, isCheckingApiKey }) => {
   return (
     <div className="flex flex-col h-screen items-center justify-center bg-gray-50 dark:bg-gray-900 text-center p-6">
         <div className="max-w-md">
@@ -310,15 +312,37 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart }) => {
             <p className="text-gray-600 dark:text-gray-400 mb-8">
                 Ready to chat? I'm Shruti, your warm and supportive AI companion. I'm here to listen, share positive vibes, and brighten your day. Let's talk!
             </p>
-            <button
-                onClick={onStart}
-                className="inline-flex items-center justify-center px-8 py-4 bg-purple-600 hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-800 text-white text-lg font-bold rounded-full shadow-lg transition-transform transform hover:scale-105 duration-300 ease-in-out"
-            >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                </svg>
-                Start Chatting
-            </button>
+            {isCheckingApiKey ? (
+                <div className="flex items-center justify-center p-2">
+                  <div className="w-6 h-6 border-2 border-purple-400 border-t-transparent rounded-full animate-spin"></div>
+                  <span className="ml-2 text-gray-500 dark:text-gray-400 text-sm">Checking for API Key...</span>
+                </div>
+            ) : hasApiKey ? (
+                <button
+                    onClick={onStart}
+                    className="inline-flex items-center justify-center px-8 py-4 bg-purple-600 hover:bg-purple-700 dark:bg-purple-700 dark:hover:bg-purple-800 text-white text-lg font-bold rounded-full shadow-lg transition-transform transform hover:scale-105 duration-300 ease-in-out"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                    </svg>
+                    Start Chatting
+                </button>
+            ) : (
+                <div className="space-y-4">
+                  <button
+                    onClick={onSelectApiKey}
+                    className="inline-flex items-center justify-center px-8 py-4 bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-800 text-white text-lg font-bold rounded-full shadow-lg transition-transform transform hover:scale-105 duration-300 ease-in-out"
+                  >
+                    Select API Key to begin
+                  </button>
+                   <p className="text-xs text-gray-500 dark:text-gray-400">
+                    For information on billing, see{' '}
+                    <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="underline hover:text-blue-500">
+                      ai.google.dev/gemini-api/docs/billing
+                    </a>.
+                  </p>
+                </div>
+            )}
         </div>
     </div>
   );
@@ -342,6 +366,8 @@ const App: React.FC = () => {
   const [audioPlaybackError, setAudioPlaybackError] = useState<string | null>(null);
   const [currentlyPlayingUserAudioId, setCurrentlyPlayingUserAudioId] = useState<string | null>(null);
   const [isSessionActive, setIsSessionActive] = useState<boolean>(false);
+  const [hasApiKey, setHasApiKey] = useState<boolean>(false);
+  const [isCheckingApiKey, setIsCheckingApiKey] = useState<boolean>(true);
 
   // Refs for Live API and audio handling
   const liveSessionRef = useRef<Promise<any> | null>(null);
@@ -396,6 +422,23 @@ const App: React.FC = () => {
     }
     return new Uint8Array(int16.buffer); // Return as Uint8Array
   };
+
+  // Check for API key on mount
+  useEffect(() => {
+    const checkApiKey = async () => {
+        setIsCheckingApiKey(true);
+        if (window.aistudio) {
+            const keySelected = await window.aistudio.hasSelectedApiKey();
+            setHasApiKey(keySelected);
+        } else {
+            // Fallback for local development or different environment
+            console.warn("window.aistudio not found. Assuming API key is set.");
+            setHasApiKey(true); 
+        }
+        setIsCheckingApiKey(false);
+    };
+    checkApiKey();
+  }, []);
 
   // Initialize audio contexts on mount
   useEffect(() => {
@@ -610,6 +653,15 @@ const App: React.FC = () => {
           },
           onerror: (e: ErrorEvent) => {
             console.error('Live session error:', e);
+
+            if (e.message.includes("Requested entity was not found.")) {
+                setHasApiKey(false);
+                setIsSessionActive(false); // Go back to welcome screen to re-select key
+                liveSessionRef.current?.then(session => session.close());
+                liveSessionRef.current = null;
+                return; // Stop further processing
+            }
+
             setIsConnecting(false);
             setIsProcessingAudio(false);
             setIsRecording(false);
@@ -957,6 +1009,16 @@ const App: React.FC = () => {
     }
   }, [input, isProcessingAudio, isAuroraSpeaking, isRecording, stopRecording]);
 
+  const handleSelectApiKey = async () => {
+    if(window.aistudio) {
+        await window.aistudio.openSelectKey();
+        // Per guideline: assume success to handle race condition
+        setHasApiKey(true);
+    } else {
+        alert("API Key selection is not available in this environment.");
+    }
+  };
+
   const handleStartSession = useCallback(async () => {
     try {
       if (inputAudioContextRef.current?.state === 'suspended') {
@@ -975,7 +1037,12 @@ const App: React.FC = () => {
   }, []);
 
   if (!isSessionActive) {
-      return <WelcomeScreen onStart={handleStartSession} />;
+      return <WelcomeScreen 
+          onStart={handleStartSession}
+          onSelectApiKey={handleSelectApiKey}
+          hasApiKey={hasApiKey}
+          isCheckingApiKey={isCheckingApiKey}
+      />;
   }
 
   return (
