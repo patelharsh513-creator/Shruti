@@ -5,14 +5,15 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenAI, Modality, LiveServerMessage, Blob } from "@google/genai";
-import { initializeApp } from "firebase/app";
+// FIX: Changed import style for `initializeApp` to resolve a potential module resolution issue.
+import * as firebase from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged, User } from "firebase/auth";
 import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Timestamp } from "firebase/firestore";
 
 
 // --- Firebase Configuration ---
 const firebaseConfig = {
-  apiKey: "AIzaSyCsPfOwOG7mjDGJYVRsHi1ND8mIQ1umHnE",
+  apiKey: "AIzaSyCUdWUxt-j63v-Dkcrauy32cbe7EvYHRZA",
   authDomain: "shruti-9c12b.firebaseapp.com",
   databaseURL: "https://shruti-9c12b-default-rtdb.europe-west1.firebasedatabase.app",
   projectId: "shruti-9c12b",
@@ -22,7 +23,8 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase using the modular SDK
-const app = initializeApp(firebaseConfig);
+// FIX: Use `firebase.initializeApp` due to the updated import style.
+const app = firebase.initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
@@ -325,6 +327,7 @@ const MessageInput: React.FC<MessageInputProps> = ({
 interface WelcomeScreenProps {
   onStart: () => void;
   onSelectApiKey: () => void;
+  onApiKeySubmit: (key: string) => void;
   hasApiKey: boolean;
   isCheckingApiKey: boolean;
   isStudioEnvironment: boolean;
@@ -332,18 +335,27 @@ interface WelcomeScreenProps {
   projectId: string;
 }
 
-const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, hasApiKey, isCheckingApiKey, isStudioEnvironment, authError, projectId }) => {
+const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, onApiKeySubmit, hasApiKey, isCheckingApiKey, isStudioEnvironment, authError, projectId }) => {
   const handleRefresh = () => {
     window.location.reload();
   };
+  const [apiKeyInput, setApiKeyInput] = useState('');
   const firebaseConsoleUrl = `https://console.firebase.google.com/project/${projectId}/authentication/providers`;
 
   const isConfigError = authError?.includes('Anonymous Authentication');
   const isNetworkError = authError?.includes('Network Error');
+  
+  const handleApiKeyFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (apiKeyInput.trim()) {
+      onApiKeySubmit(apiKeyInput.trim());
+    }
+  };
+
 
   return (
     <div className="flex flex-col h-screen items-center justify-center bg-gray-50 dark:bg-gray-900 text-center p-6">
-        <div className="max-w-md">
+        <div className="max-w-md w-full">
             <h1 className="text-4xl font-bold text-purple-700 dark:text-purple-400 mb-4">Shruti</h1>
             <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-2">તમારી AI Girlfriend</h2>
             <p className="text-gray-600 dark:text-gray-400 mb-8">
@@ -393,7 +405,7 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, 
             ) : isCheckingApiKey ? (
                 <div className="flex items-center justify-center p-2">
                   <div className="w-6 h-6 border-2 border-purple-400 border-t-transparent rounded-full animate-spin"></div>
-                  <span className="ml-2 text-gray-500 dark:text-gray-400 text-sm">Checking for API Key...</span>
+                  <span className="ml-2 text-gray-500 dark:text-gray-400 text-sm">Initializing...</span>
                 </div>
             ) : hasApiKey ? (
                 <button
@@ -421,21 +433,37 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, 
                   </p>
                 </div>
             ) : (
-                <div className="space-y-4">
-                    <button
-                        disabled
-                        className="inline-flex items-center justify-center px-8 py-4 bg-gray-400 dark:bg-gray-600 text-white text-lg font-bold rounded-full shadow-lg cursor-not-allowed"
-                        aria-disabled="true"
-                    >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                        </svg>
-                        Start Chatting
-                    </button>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 px-4">
-                        This application requires an API key to function.
-                        <br />
-                        Please run it in a supported environment like Google AI Studio.
+                <div className="space-y-4 text-left">
+                    <p className="text-sm text-gray-600 dark:text-gray-400 text-center mb-4">
+                        Please provide your Google AI API key to continue.
+                    </p>
+                    <form onSubmit={handleApiKeyFormSubmit} className="space-y-4">
+                        <div>
+                            <label htmlFor="api-key-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                Google AI API Key
+                            </label>
+                            <input
+                                id="api-key-input"
+                                type="password"
+                                value={apiKeyInput}
+                                onChange={(e) => setApiKeyInput(e.target.value)}
+                                className="block w-full px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm"
+                                placeholder="Enter your API key"
+                                required
+                            />
+                        </div>
+                        <button
+                            type="submit"
+                            className="w-full inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-medium rounded-md shadow-sm text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 dark:bg-purple-700 dark:hover:bg-purple-800 transition-colors"
+                        >
+                            Submit Key & Start Chatting
+                        </button>
+                    </form>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 text-center pt-2">
+                        You can get your key from{' '}
+                        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="underline hover:text-purple-500">
+                            Google AI Studio
+                        </a>.
                     </p>
                 </div>
             )}
@@ -598,19 +626,16 @@ const App: React.FC = () => {
         const isStudio = !!(window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function');
         setIsStudioEnvironment(isStudio);
 
-        let keyExists = false;
         if (isStudio) {
             try {
-                keyExists = await window.aistudio.hasSelectedApiKey();
+                const keyExists = await window.aistudio.hasSelectedApiKey();
+                setHasApiKey(keyExists);
             } catch (e) {
                 console.error("Error checking for API key in AI Studio:", e);
-                keyExists = false;
+                setHasApiKey(false);
             }
-        } else {
-            console.warn("window.aistudio not found. The app may not function correctly as it's designed for environments like Google AI Studio where an API key is provided.");
-            keyExists = !!process.env.API_KEY;
         }
-        setHasApiKey(keyExists);
+        // For non-studio environments, we wait for user input.
         setIsCheckingApiKey(false);
     };
     checkApiKey();
@@ -766,11 +791,13 @@ const App: React.FC = () => {
           onerror: (e: ErrorEvent) => {
             console.error('Live session error:', e);
 
-            if (e.message.includes("Requested entity was not found.")) {
+            if (e.message.includes("API key not valid") || e.message.includes("Requested entity was not found.")) {
                 setHasApiKey(false);
                 setAppState('welcome');
                 liveSessionRef.current?.then(session => session.close());
                 liveSessionRef.current = null;
+                // Use a timeout to ensure state update propagates before alerting
+                setTimeout(() => alert("The provided API key is not valid. Please check your key and try again."), 100);
                 return;
             }
 
@@ -977,10 +1004,28 @@ const App: React.FC = () => {
   const handleSelectApiKey = async () => {
     if(window.aistudio) {
         await window.aistudio.openSelectKey();
-        setHasApiKey(true);
+        const keyExists = await window.aistudio.hasSelectedApiKey();
+        setHasApiKey(keyExists);
     } else {
         alert("API Key selection is not available in this environment.");
     }
+  };
+
+  // FIX: Reworked to fix a TypeScript error and a potential runtime ReferenceError
+  // when polyfilling `process.env` in the browser for API key submission.
+  // The new implementation safely checks for `window.process.env` and creates it
+  // if it doesn't exist, while using type casting to satisfy the TypeScript compiler.
+  const handleApiKeySubmit = (key: string) => {
+    if (typeof (window as any).process === 'undefined') {
+      (window as any).process = {};
+    }
+    if (typeof (window as any).process.env === 'undefined') {
+      (window as any).process.env = {};
+    }
+    (window as any).process.env.API_KEY = key;
+    setHasApiKey(true);
+    // Automatically start the session after submitting the key
+    handleStartSession();
   };
 
   const handleStartSession = useCallback(async () => {
@@ -1006,6 +1051,7 @@ const App: React.FC = () => {
       return <WelcomeScreen
           onStart={handleStartSession}
           onSelectApiKey={handleSelectApiKey}
+          onApiKeySubmit={handleApiKeySubmit}
           hasApiKey={hasApiKey}
           isCheckingApiKey={isCheckingApiKey}
           isStudioEnvironment={isStudioEnvironment}
