@@ -344,11 +344,22 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, 
                   </p>
                 </div>
             ) : (
-                <div className="space-y-4 p-4 border border-red-500/50 bg-red-500/10 rounded-lg max-w-md w-full">
-                  <h3 className="text-lg font-semibold text-red-700 dark:text-red-400">Configuration Error</h3>
-                  <p className="text-gray-600 dark:text-gray-400">
-                    This application requires an API key to function. Please run this in an environment where an API key is configured, such as Google AI Studio.
-                  </p>
+                <div className="space-y-4">
+                    <button
+                        disabled
+                        className="inline-flex items-center justify-center px-8 py-4 bg-gray-400 dark:bg-gray-600 text-white text-lg font-bold rounded-full shadow-lg cursor-not-allowed"
+                        aria-disabled="true"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                        </svg>
+                        Start Chatting
+                    </button>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 px-4">
+                        This application requires an API key to function.
+                        <br />
+                        Please run it in a supported environment like Google AI Studio.
+                    </p>
                 </div>
             )}
         </div>
