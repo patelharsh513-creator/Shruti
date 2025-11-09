@@ -21,7 +21,7 @@ const firebaseConfig = {
   appId: "1:575863583929:web:fb108edeceb85589a9d768"
 };
 
-// Initialize Firebase
+// Initialize Firebase using the modular SDK
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -189,7 +189,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ messages, isProcessingAudio, is
                 <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
                   {currentlyPlayingUserAudioId === message.id ? (
                     // Stop icon (square)
-                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 8a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1H9a1 1 0 01-1-1V8z" clipRule="evenodd" />
+                    <path d="M6 6h8v8H6z" />
                   ) : (
                     // Play icon (triangle)
                     <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 8.168A1 1 0 008 9.062v1.876a1 1 0 001.555.832l3-1.438a1 1 0 000-1.664l-3-1.438z" clipRule="evenodd" />
@@ -328,9 +328,19 @@ interface WelcomeScreenProps {
   hasApiKey: boolean;
   isCheckingApiKey: boolean;
   isStudioEnvironment: boolean;
+  authError: string | null;
+  projectId: string;
 }
 
-const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, hasApiKey, isCheckingApiKey, isStudioEnvironment }) => {
+const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, hasApiKey, isCheckingApiKey, isStudioEnvironment, authError, projectId }) => {
+  const handleRefresh = () => {
+    window.location.reload();
+  };
+  const firebaseConsoleUrl = `https://console.firebase.google.com/project/${projectId}/authentication/providers`;
+
+  const isConfigError = authError?.includes('Anonymous Authentication');
+  const isNetworkError = authError?.includes('Network Error');
+
   return (
     <div className="flex flex-col h-screen items-center justify-center bg-gray-50 dark:bg-gray-900 text-center p-6">
         <div className="max-w-md">
@@ -339,7 +349,48 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, 
             <p className="text-gray-600 dark:text-gray-400 mb-8">
                 Ready to chat? I'm Shruti, your warm and supportive AI companion. I'm here to listen, share positive vibes, and brighten your day. Let's talk!
             </p>
-            {isCheckingApiKey ? (
+
+            {authError ? (
+                <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative mb-6 dark:bg-red-900/50 dark:border-red-700 dark:text-red-300 text-left shadow-md" role="alert">
+                    <div className="flex">
+                        <div className="py-1">
+                          <svg className="fill-current h-6 w-6 text-red-500 mr-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M10 0C4.48 0 0 4.48 0 10s4.48 10 10 10 10-4.48 10-10S15.52 0 10 0zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-5h2v2h-2v-2zm0-8h2v6h-2V5z"/></svg>
+                        </div>
+                        <div>
+                            {isConfigError ? (
+                                <>
+                                    <strong className="font-bold">Firebase Configuration Required</strong>
+                                    <p className="text-sm mt-2 mb-3">To enable chat history, please enable Anonymous Authentication in your Firebase project:</p>
+                                    <ol className="list-decimal list-inside text-sm space-y-1 mb-4">
+                                        <li>Open your project in the Firebase Console.</li>
+                                        <li>Go to <strong>Authentication</strong> &rarr; <strong>Sign-in method</strong>.</li>
+                                        <li>Click <strong>Add new provider</strong> and select <strong>Anonymous</strong>.</li>
+                                        <li>Enable the provider and click <strong>Save</strong>.</li>
+                                    </ol>
+                                    <div className="flex items-center space-x-4">
+                                        <a href={firebaseConsoleUrl} target="_blank" rel="noopener noreferrer" className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm transition-colors">
+                                        Go to Firebase Console
+                                        </a>
+                                        <button onClick={handleRefresh} className="border border-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 font-bold py-2 px-4 rounded-lg text-sm transition-colors">
+                                        Refresh Page
+                                        </button>
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <strong className="font-bold">{isNetworkError ? "Network Error" : "Authentication Error"}</strong>
+                                    <p className="text-sm mt-2 mb-3">{authError}</p>
+                                    <div className="flex items-center space-x-4 mt-4">
+                                        <button onClick={handleRefresh} className="border border-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 font-bold py-2 px-4 rounded-lg text-sm transition-colors">
+                                            {isNetworkError ? "Try Again" : "Refresh Page"}
+                                        </button>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            ) : isCheckingApiKey ? (
                 <div className="flex items-center justify-center p-2">
                   <div className="w-6 h-6 border-2 border-purple-400 border-t-transparent rounded-full animate-spin"></div>
                   <span className="ml-2 text-gray-500 dark:text-gray-400 text-sm">Checking for API Key...</span>
@@ -410,6 +461,7 @@ const App: React.FC = () => {
   const [isCheckingApiKey, setIsCheckingApiKey] = useState<boolean>(true);
   const [isStudioEnvironment, setIsStudioEnvironment] = useState<boolean>(false);
   const [inProgressAuroraMessage, setInProgressAuroraMessage] = useState<Message | null>(null);
+  const [firebaseAuthError, setFirebaseAuthError] = useState<string | null>(null);
 
 
   // Refs for Live API and audio handling
@@ -466,12 +518,36 @@ const App: React.FC = () => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
         if (currentUser) {
             setUser(currentUser);
+            setFirebaseAuthError(null); // Clear any previous error
         } else {
             try {
                 const userCredential = await signInAnonymously(auth);
                 setUser(userCredential.user);
-            } catch (error) {
-                console.error("Error signing in anonymously:", error);
+                setFirebaseAuthError(null); // Clear any previous error
+            } catch (e) {
+                console.error("Error signing in anonymously:", e);
+                // Type-safe check for FirebaseError to provide specific user feedback
+                if (e && typeof e === 'object' && 'code' in e && typeof e.code === 'string') {
+                    switch (e.code) {
+                        case 'auth/configuration-not-found':
+                            setFirebaseAuthError("Configuration Error: Anonymous Authentication is not enabled. Please enable it in your Firebase project console.");
+                            break;
+                        case 'auth/network-request-failed':
+                            setFirebaseAuthError("Network Error: Could not connect to Firebase. Please check your internet connection and try again.");
+                            break;
+                        default:
+                             if (e instanceof Error && e.message) {
+                                setFirebaseAuthError(`An authentication error occurred: ${e.message}. Please check the console for details.`);
+                             } else {
+                                setFirebaseAuthError(`An authentication error occurred: ${e.code}. Please check the console for details.`);
+                             }
+                            break;
+                    }
+                } else if (e instanceof Error) {
+                    setFirebaseAuthError(`An authentication error occurred: ${e.message}. Please check the console for details.`);
+                } else {
+                    setFirebaseAuthError(`An unknown authentication error occurred. Please check the console for details.`);
+                }
             }
         }
     });
@@ -542,10 +618,10 @@ const App: React.FC = () => {
 
   // Transition from 'initializing' to 'welcome' state
   useEffect(() => {
-    if (appState === 'initializing' && user && !isCheckingApiKey) {
+    if (appState === 'initializing' && (user || firebaseAuthError) && !isCheckingApiKey) {
         setAppState('welcome');
     }
-  }, [user, isCheckingApiKey, appState]);
+  }, [user, firebaseAuthError, isCheckingApiKey, appState]);
 
   // Initialize audio contexts on mount
   useEffect(() => {
@@ -933,6 +1009,8 @@ const App: React.FC = () => {
           hasApiKey={hasApiKey}
           isCheckingApiKey={isCheckingApiKey}
           isStudioEnvironment={isStudioEnvironment}
+          authError={firebaseAuthError}
+          projectId={firebaseConfig.projectId}
       />;
   }
 
