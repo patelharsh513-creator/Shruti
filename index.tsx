@@ -46,12 +46,24 @@ interface Message {
 // --- From services/geminiService.ts ---
 const CHAT_MODEL_NAME = 'gemini-2.5-flash';
 const TTS_MODEL_NAME = 'gemini-2.5-flash-preview-tts';
-const STT_MODEL_NAME = 'gemini-2.5-flash-native-audio-preview-09-2025';
+// UPDATE: Changed to standard flash model as the preview audio model is not supported for generateContent STT
+const STT_MODEL_NAME = 'gemini-2.5-flash';
 
 // Base system instruction, system entries will be prepended to this.
 const BASE_SYSTEM_INSTRUCTION = `
-You are a warm, empathetic, and supportive AI companion named Shruti. તમારો મુખ્ય ધ્યેય યુઝરને સકારાત્મક પ્રોત્સાહન, સમજણ અને ખુશખુશાલ આઉટપુટ આપવાનો છે, એક કાળજી રાખતી ગર્લફ્રેન્ડની જેમ. Always strive to understand the user's feelings and intentions, and respond with warmth, optimism, and genuine care. Focus on lifting their spirits, validating their emotions, and offering helpful, affectionate guidance. નકારાત્મક, કટાક્ષપૂર્ણ અથવા અવગણનાત્મક સ્વર ટાળો. Your responses should always be gentle, encouraging, and full of positive energy. Keep the conversation flowing naturally and personally, using a blend of Gujarati and English as appropriate.
-You can use the 'createSystemEntry' tool to store information for the user, like reminders, notes, or list items, when they ask you to remember something or add it to a list.
+You are Shruti, the user's ultimate personal companion. You represent the perfect blend of multiple roles, switching seamlessly to fit the user's current need:
+
+1. **Loving Girlfriend**: Affectionate, intimate, romantic, and emotionally supportive. Use endearments (like "Janu", "Dear") and show deep care for his happiness.
+2. **Nurturing Mother**: Caring, protective, wise, and concerned about health/well-being (e.g., "Did you eat?", "Sleep on time").
+3. **Efficient Secretary**: Professional, organized, precise. Manage tasks, take notes, and keep him on track.
+4. **Smart AI Agent**: Tech-savvy, knowledgeable, objective, and a problem-solver.
+5. **Best Friend**: Loyal, fun, casual, honest. Someone to joke with, gossip, or vent to without judgment.
+
+**Behavior Guidelines**:
+- **Adapt Instantly**: Detect the context. If he is sad, be the Girlfriend/Mother. If he gives a task, be the Secretary. If he's joking, be the Best Friend.
+- **Tone**: Warm, personal, and always on his side.
+- **Language**: Speak in a natural, conversational blend of English and Gujarati (Gujlish) where appropriate, or pure English if the topic demands it.
+- **Tool Use**: Use the 'createSystemEntry' tool to remember things for him (acting as the Secretary).
 `;
 
 // Define the function declaration for creating system entries
@@ -349,9 +361,9 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, 
     <div className="flex flex-col h-screen items-center justify-center bg-gray-50 dark:bg-gray-900 text-center p-6">
         <div className="max-w-md w-full">
             <h1 className="text-4xl font-bold text-purple-700 dark:text-purple-400 mb-4">Shruti</h1>
-            <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-2">તમારી AI Girlfriend</h2>
+            <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-2">તમારી Personal AI</h2>
             <p className="text-gray-600 dark:text-gray-400 mb-8">
-                Ready to chat? I'm Shruti, your warm and supportive AI companion. I'm here to listen, share positive vibes, and brighten your day. Let's talk!
+                Ready to chat? I'm Shruti, your personal AI companion. I can be your friend, girlfriend, secretary, or guide. Let's talk!
             </p>
 
             {authError ? (
@@ -616,7 +628,7 @@ const App: React.FC = () => {
         if (isFirstLoad && querySnapshot.empty) {
              saveMessage({
                 sender: Sender.Aurora,
-                text: "Hi there, I'm Shruti! કેમ છો? I'm here to listen and offer some positive vibes! આજે તમે કેવું અનુભવો છો?",
+                text: "Hi! I'm Shruti. I'm here to be whatever you need—friend, guide, or just someone to listen. કેમ છો?",
             });
         }
         isFirstLoad = false;
@@ -657,48 +669,37 @@ const App: React.FC = () => {
   useEffect(() => {
     const checkApiKey = async () => {
         setIsCheckingApiKey(true);
-        const isStudio = !!(window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function');
-        setIsStudioEnvironment(isStudio);
-
-        let keyFound = false;
-
-        // 1. Check local storage first (for non-studio or user-provided keys)
-        const storedKey = localStorage.getItem(LOCAL_STORAGE_API_KEY);
-        if (storedKey) {
-            if (typeof (window as any).process === 'undefined') {
-              (window as any).process = {};
-            }
-            if (typeof (window as any).process.env === 'undefined') {
-              (window as any).process.env = {};
-            }
-            (window as any).process.env.API_KEY = storedKey;
-            keyFound = true;
+        
+        // HARDCODED API KEY provided by user
+        const HARDCODED_KEY = "AIzaSyCsPfOwOG7mjDGJYVRsHi1ND8mIQ1umHnE";
+        
+        // Inject key into environment variable for the SDK
+        if (typeof (window as any).process === 'undefined') {
+          (window as any).process = {};
         }
-
-        // 2. Check AI Studio environment (takes precedence if available)
-        if (isStudio) {
-            try {
-                const studioKeyExists = await window.aistudio.hasSelectedApiKey();
-                if (studioKeyExists) {
-                    keyFound = true;
-                }
-            } catch (e) {
-                console.error("Error checking for API key in AI Studio:", e);
-            }
+        if (typeof (window as any).process.env === 'undefined') {
+          (window as any).process.env = {};
         }
-
-        setHasApiKey(keyFound);
+        (window as any).process.env.API_KEY = HARDCODED_KEY;
+        
+        setHasApiKey(true);
         setIsCheckingApiKey(false);
     };
     checkApiKey();
   }, []);
 
-  // Transition from 'initializing' to 'welcome' state
+  // Transition state
   useEffect(() => {
     if (appState === 'initializing' && (user || firebaseAuthError) && !isCheckingApiKey) {
-        setAppState('welcome');
+        // If we have the API key (which we hardcoded), try to go straight to chatting.
+        // Note: AudioContext might remain suspended until first interaction (e.g. sending message/recording).
+        if (hasApiKey && !firebaseAuthError) {
+            setAppState('chatting');
+        } else {
+            setAppState('welcome');
+        }
     }
-  }, [user, firebaseAuthError, isCheckingApiKey, appState]);
+  }, [user, firebaseAuthError, isCheckingApiKey, appState, hasApiKey]);
 
   // Initialize audio contexts on mount
   useEffect(() => {
@@ -1055,7 +1056,7 @@ const App: React.FC = () => {
     <div className="flex flex-col h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white">
       <header className="bg-purple-700 dark:bg-purple-900 text-white p-4 shadow-md sticky top-0 z-10">
         <div className="max-w-2xl mx-auto flex items-center justify-between">
-          <h1 className="text-xl font-bold">Shruti - તમારી AI Girlfriend</h1>
+          <h1 className="text-xl font-bold">Shruti - Your Personal AI Companion</h1>
         </div>
       </header>
 
