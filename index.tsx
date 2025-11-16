@@ -1,5 +1,4 @@
 // index.tsx
-
 // External Dependencies
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
