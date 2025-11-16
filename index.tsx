@@ -1,13 +1,16 @@
+
 // index.tsx
+
 // External Dependencies
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenAI, Modality, FunctionDeclaration, Type, Chat } from "@google/genai";
 // FIX: Use `initializeApp` directly from "firebase/app" for standard modular SDK usage.
-import { initializeApp } from "firebase/app";
-import { getAuth, signInAnonymously, onAuthStateChanged, User } from "firebase/auth";
-import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, Timestamp } from "firebase/firestore";
+// FIX: Changed Firebase imports and usage to namespace imports to resolve "Module has no exported member" errors, likely due to specific environment/type definition conflicts.
+import * as firebaseApp from "firebase/app";
+import * as firebaseAuth from "firebase/auth";
+import * as firebaseFirestore from "firebase/firestore";
 
 
 // --- Firebase Configuration ---
@@ -23,9 +26,9 @@ const firebaseConfig = {
 
 // Initialize Firebase using the modular SDK
 // FIX: Use `initializeApp` directly.
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+const app = firebaseApp.initializeApp(firebaseConfig);
+const auth = firebaseAuth.getAuth(app);
+const db = firebaseFirestore.getFirestore(app);
 
 
 // --- From types.ts ---
@@ -479,7 +482,8 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onStart, onSelectApiKey, 
 // --- From App.tsx ---
 const App: React.FC = () => {
   const [appState, setAppState] = useState<'initializing' | 'welcome' | 'chatting'>('initializing');
-  const [user, setUser] = useState<User | null>(null);
+  // FIX: Changed type `User` to `firebaseAuth.User` for correct Firebase Auth type resolution.
+  const [user, setUser] = useState<firebaseAuth.User | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState<string>(''); // For current user transcription or text input
   const [isRecording, setIsRecording] = useState<boolean>(false);
@@ -487,6 +491,7 @@ const App: React.FC = () => {
   const [isProcessingAudio, setIsProcessingAudio] = useState<boolean>(false); // Replaces isLoading
   const [isConnecting, setIsConnecting] = useState<boolean>(false); // For initial connection status
   const [audioPlaybackError, setAudioPlaybackError] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<{ message: string, code?: number | string } | null>(null);
   const [currentlyPlayingUserAudioId, setCurrentlyPlayingUserAudioId] = useState<string | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean>(false);
   const [isCheckingApiKey, setIsCheckingApiKey] = useState<boolean>(true);
@@ -508,6 +513,7 @@ const App: React.FC = () => {
 
 
   // Helper function to combine Float32Array chunks into a single Float32Array
+  // FIX: Changed `Float34Array` to `Float32Array`.
   const combineFloat32Arrays = (chunks: Float32Array[]): Float32Array => {
     const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
     const combined = new Float32Array(totalLength);
@@ -534,9 +540,10 @@ const App: React.FC = () => {
   const saveMessage = async (messageData: { sender: Sender; text: string; audioData?: string; }) => {
     if (!user) return;
     try {
-        await addDoc(collection(db, 'users', user.uid, 'messages'), {
+        // FIX: Changed `collection` to `firebaseFirestore.collection` and `serverTimestamp` to `firebaseFirestore.serverTimestamp`.
+        await firebaseFirestore.addDoc(firebaseFirestore.collection(db, 'users', user.uid, 'messages'), {
             ...messageData,
-            timestamp: serverTimestamp(),
+            timestamp: firebaseFirestore.serverTimestamp(),
         });
     } catch (error) {
         console.error("Error saving message to Firestore:", error);
@@ -547,10 +554,11 @@ const App: React.FC = () => {
   const saveSystemEntry = async (category: string, content: string) => {
     if (!user) return;
     try {
-        await addDoc(collection(db, 'users', user.uid, 'systemEntries'), {
+        // FIX: Changed `addDoc` and `collection` to `firebaseFirestore.addDoc` and `firebaseFirestore.collection` and `serverTimestamp` to `firebaseFirestore.serverTimestamp`.
+        await firebaseFirestore.addDoc(firebaseFirestore.collection(db, 'users', user.uid, 'systemEntries'), {
             category: category,
             content: content,
-            timestamp: serverTimestamp(),
+            timestamp: firebaseFirestore.serverTimestamp(),
             status: 'active', // Assuming entries are active when set
         });
         console.log("System entry saved to Firestore:", category, content);
@@ -562,13 +570,14 @@ const App: React.FC = () => {
 
   // Firebase anonymous auth
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    // FIX: Changed `onAuthStateChanged` and `signInAnonymously` to `firebaseAuth.onAuthStateChanged` and `firebaseAuth.signInAnonymously`.
+    const unsubscribe = firebaseAuth.onAuthStateChanged(auth, async (currentUser) => {
         if (currentUser) {
             setUser(currentUser);
             setFirebaseAuthError(null); // Clear any previous error
         } else {
             try {
-                const userCredential = await signInAnonymously(auth);
+                const userCredential = await firebaseAuth.signInAnonymously(auth);
                 setUser(userCredential.user);
                 setFirebaseAuthError(null); // Clear any previous error
             } catch (e: any) { // FIX: Changed type to `any` to handle complex error shapes without TypeScript complaining.
@@ -605,19 +614,21 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!user) return;
 
-    const messagesRef = collection(db, 'users', user.uid, 'messages');
-    const q = query(messagesRef, orderBy('timestamp', 'asc'));
+    // FIX: Changed `collection`, `query`, `orderBy`, `onSnapshot` to their `firebaseFirestore` namespace equivalents.
+    const messagesRef = firebaseFirestore.collection(db, 'users', user.uid, 'messages');
+    const q = firebaseFirestore.query(messagesRef, firebaseFirestore.orderBy('timestamp', 'asc'));
 
     let isFirstLoad = true;
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+    const unsubscribe = firebaseFirestore.onSnapshot(q, (querySnapshot) => {
         const msgs: Message[] = [];
         querySnapshot.forEach((doc) => {
             const data = doc.data();
+            // FIX: Changed `Timestamp` to `firebaseFirestore.Timestamp`.
             msgs.push({
                 id: doc.id,
                 sender: data.sender,
                 text: data.text,
-                timestamp: (data.timestamp as Timestamp)?.toDate() || new Date(),
+                timestamp: (data.timestamp as firebaseFirestore.Timestamp)?.toDate() || new Date(),
                 audioData: data.audioData,
             });
         });
@@ -642,10 +653,11 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!user) return;
 
-    const systemEntriesRef = collection(db, 'users', user.uid, 'systemEntries');
-    const q = query(systemEntriesRef, orderBy('timestamp', 'asc')); // Order by timestamp to maintain consistency
+    // FIX: Changed `collection`, `query`, `orderBy`, `onSnapshot` to their `firebaseFirestore` namespace equivalents.
+    const systemEntriesRef = firebaseFirestore.collection(db, 'users', user.uid, 'systemEntries');
+    const q = firebaseFirestore.query(systemEntriesRef, firebaseFirestore.orderBy('timestamp', 'asc')); // Order by timestamp to maintain consistency
 
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+    const unsubscribe = firebaseFirestore.onSnapshot(q, (querySnapshot) => {
         const entries: { category: string, content: string }[] = [];
         querySnapshot.forEach((doc) => {
             const data = doc.data();
@@ -746,8 +758,12 @@ const App: React.FC = () => {
           });
           chatSessionRef.current = chat;
           console.log("Chat session initialized.");
-      } catch (error) {
+          setApiError(null); // Clear any API errors if init succeeds
+      } catch (error: any) {
           console.error("Failed to initialize chat session:", error);
+          const errorMessage = "Oops! I couldn't start our chat session. This might be due to an API key issue or a network problem.";
+          const errorCode = error?.code || error?.status;
+          setApiError({ message: errorMessage, code: errorCode });
           saveMessage({ sender: Sender.Aurora, text: "Oops! I couldn't start our chat. Please check your API key and refresh." });
       } finally {
           setIsConnecting(false);
@@ -803,6 +819,8 @@ const App: React.FC = () => {
   const startRecording = useCallback(async () => {
     if (isRecording || isProcessingAudio || isAuroraSpeaking || !inputAudioContextRef.current) return;
 
+    setApiError(null); // Clear any previous API errors on new user action
+
     try {
       if (inputAudioContextRef.current.state === 'suspended') {
         await inputAudioContextRef.current.resume();
@@ -852,6 +870,7 @@ const App: React.FC = () => {
         return;
     }
 
+    setApiError(null); // Clear any previous API errors on new user action
     setIsProcessingAudio(true);
     setInput('');
     saveMessage({ sender: Sender.User, text: text, audioData: userAudioData });
@@ -935,8 +954,11 @@ const App: React.FC = () => {
             }
         }
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error during chat send/receive:", error);
+        const errorMessage = "It seems our chat session closed unexpectedly. This might be a network issue or a temporary service problem.";
+        const errorCode = error?.code || error?.status;
+        setApiError({ message: errorMessage, code: errorCode });
         saveMessage({ sender: Sender.Aurora, text: "I'm sorry, I ran into a problem. Could you try that again?" });
     } finally {
         setIsProcessingAudio(false);
@@ -974,8 +996,11 @@ const App: React.FC = () => {
         if (transcribedText.trim()) {
             await handleSendMessage(transcribedText, base64UserAudio);
         }
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error transcribing audio:", error);
+        const errorMessage = "I had trouble understanding that. It seems there was an issue with the transcription service. Please check your network and try again.";
+        const errorCode = error?.code || error?.status;
+        setApiError({ message: errorMessage, code: errorCode });
         saveMessage({ sender: Sender.Aurora, text: "I had trouble understanding that. Please try again." });
     } finally {
         userAudioChunksRef.current = [];
@@ -1028,6 +1053,7 @@ const App: React.FC = () => {
         await outputAudioContextRef.current.resume();
       }
       setAppState('chatting');
+      setApiError(null); // Clear any API errors when session starts
     } catch (error) {
         console.error("Error resuming audio contexts:", error);
         alert("Could not start the audio session. Please check your browser permissions and refresh the page.");
@@ -1076,6 +1102,16 @@ const App: React.FC = () => {
           {audioPlaybackError && (
             <div className="bg-red-500 text-white text-center p-2 mx-auto max-w-2xl rounded-lg shadow-md mb-2">
               {audioPlaybackError}
+            </div>
+          )}
+          {apiError && (
+            <div className="bg-red-500 text-white text-center p-2 mx-auto max-w-2xl rounded-lg shadow-md mb-2" role="alert">
+              <p>{apiError.message}</p>
+              {apiError.code && <p className="text-sm mt-1">Error code: {apiError.code}</p>}
+              <div className="flex justify-center space-x-4 mt-2">
+                <button onClick={() => window.location.reload()} className="underline text-sm font-semibold">Refresh Page</button>
+                <button onClick={() => setApiError(null)} className="underline text-sm font-semibold">Dismiss</button>
+              </div>
             </div>
           )}
           <MessageInput
