@@ -1,7 +1,7 @@
 {
   "name": "Shruti - Your Personal AI Companion",
-  "description": "Chat with Shruti, a multifaceted AI companion who seamlessly adapts to be your friend, girlfriend, mother, secretary, or AI agent based on your needs. She provides support, organization, and companionship in a blend of Gujarati and English.",
+  "description": "Chat with Shruti, a multifaceted AI companion who seamlessly adapts to be your friend, girlfriend, mother, secretary, or AI agent based on your needs. She provides best knowledge, support, organization, and companionship in a blend of Gujarati and English.",
   "requestFramePermissions": [
-    "microphone"
+    "microphone" "Allowed"
   ]
 }
